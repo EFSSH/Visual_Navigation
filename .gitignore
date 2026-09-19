@@ -1,0 +1,40 @@
+# ROS 2 generated directories
+build/
+install/
+log/
+
+# Simulation environment and recorded data
+/bags/
+/models/
+/sim_assets/
+/config/
+/src/b2_nav_sim/
+
+# Simulation-only root files
+/HZ26_SIM_README.md
+/start_hz26_sim.sh
+/start_hz26_sim.sh.*
+
+# Keep only the final navigation baseline map
+/maps/*
+!/maps/hz26_final.yaml
+!/maps/hz26_final.pgm
+
+# Python caches and test artifacts
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+.coverage
+
+# Backup and temporary files
+*.bak
+*.before_*
+*.tmp
+*.swp
+*~
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
