@@ -3,9 +3,18 @@
 <package format="3">
   <name>b2_nav_twin</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Local geometric world model for B2 navigation.</description>
   <maintainer email="dministrator@todo.todo">dministrator</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
+
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>sensor_msgs_py</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

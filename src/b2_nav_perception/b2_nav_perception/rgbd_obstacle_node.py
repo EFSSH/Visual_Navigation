@@ -23,6 +23,10 @@ class RGBDObstacleNode(Node):
             'output_topic',
             '/vision/obstacle_cloud',
         )
+        self.declare_parameter(
+            'clearing_output_topic',
+            '/vision/clearing_cloud',
+        )
         self.declare_parameter('target_frame', 'base_link')
         self.declare_parameter('x_min', 0.20)
         self.declare_parameter('x_max', 3.00)
@@ -34,6 +38,9 @@ class RGBDObstacleNode(Node):
 
         self.input_topic = self.get_parameter('input_topic').value
         self.output_topic = self.get_parameter('output_topic').value
+        self.clearing_output_topic = self.get_parameter(
+            'clearing_output_topic'
+        ).value
         self.target_frame = self.get_parameter('target_frame').value
         self.x_min = self.get_parameter('x_min').value
         self.x_max = self.get_parameter('x_max').value
@@ -65,11 +72,17 @@ class RGBDObstacleNode(Node):
             self.output_topic,
             qos_profile_sensor_data,
         )
+        self.clearing_cloud_pub = self.create_publisher(
+            PointCloud2,
+            self.clearing_output_topic,
+            qos_profile_sensor_data,
+        )
 
         self.get_logger().info(
             'RGB-D obstacle node started: '
             f'input={self.input_topic}, '
             f'output={self.output_topic}, '
+            f'clearing_output={self.clearing_output_topic}, '
             f'target_frame={self.target_frame}'
         )
         self.get_logger().info(
@@ -102,13 +115,16 @@ class RGBDObstacleNode(Node):
                     Time.from_msg(msg.header.stamp),
                     timeout=Duration(seconds=0.2),
                 )
-            filtered_cloud = self.transform_and_filter_cloud(msg, transform)
+            filtered_cloud, clearing_cloud = (
+                self.transform_and_filter_clouds(msg, transform)
+            )
         except (AssertionError, TransformException, ValueError) as error:
             self.failed_count += 1
             self._log_processing_failure(str(error))
             return
 
         self.cloud_pub.publish(filtered_cloud)
+        self.clearing_cloud_pub.publish(clearing_cloud)
         self.transformed_count += 1
 
         # 相机约5 Hz，每25帧打印一次，避免刷屏
@@ -119,11 +135,21 @@ class RGBDObstacleNode(Node):
                 f'published={self.transformed_count}, '
                 f'{source_frame} -> {filtered_cloud.header.frame_id}, '
                 f'input_points={msg.width * msg.height}, '
-                f'output_points={filtered_cloud.width * filtered_cloud.height}'
+                f'obstacle_points='
+                f'{filtered_cloud.width * filtered_cloud.height}, '
+                f'clearing_points='
+                f'{clearing_cloud.width * clearing_cloud.height}'
             )
 
     def transform_and_filter_cloud(self, cloud, transform):
         """Transform XYZ points and keep those inside the configured box."""
+        obstacle_cloud, _ = self.transform_and_filter_clouds(
+            cloud, transform
+        )
+        return obstacle_cloud
+
+    def transform_and_filter_clouds(self, cloud, transform):
+        """Create obstacle-marking and free-space-clearing point clouds."""
         points = point_cloud2.read_points(
             cloud,
             field_names=['x', 'y', 'z'],
@@ -132,22 +158,23 @@ class RGBDObstacleNode(Node):
 
         # 相机点云通常很密，先均匀抽样以降低后续计算和通信负载。
         points = points[::self.point_step]
-        xyz = np.column_stack(
+        source_xyz = np.column_stack(
             (points['x'], points['y'], points['z'])
         ).astype(np.float64, copy=False)
 
         # Gazebo uses NaN/Inf for pixels without a valid depth return. Remove
         # them before matrix multiplication to avoid warnings and wasted work.
-        xyz = xyz[np.isfinite(xyz).all(axis=1)]
+        source_xyz = source_xyz[np.isfinite(source_xyz).all(axis=1)]
+        xyz = source_xyz
 
         if transform is not None:
-            xyz = self._apply_transform(xyz, transform)
+            xyz = self._apply_transform(source_xyz, transform)
 
         x = xyz[:, 0]
         y = xyz[:, 1]
         z = xyz[:, 2]
 
-        keep = (
+        inside_horizontal_window = (
             np.isfinite(x)
             & np.isfinite(y)
             & np.isfinite(z)
@@ -155,19 +182,43 @@ class RGBDObstacleNode(Node):
             & (x <= self.x_max)
             & (y >= self.y_min)
             & (y <= self.y_max)
+        )
+        obstacle_keep = (
+            inside_horizontal_window
             & (z >= self.z_min)
             & (z <= self.z_max)
         )
+        # Keep floor returns for clearing. Once an obstacle is removed, rays to
+        # these points pass through its old cells and erase the stale voxels.
+        clearing_keep = (
+            inside_horizontal_window
+            & (z >= -0.20)
+            & (z <= self.z_max)
+        )
 
-        filtered_points = xyz[keep].astype(np.float32, copy=False)
+        filtered_points = xyz[obstacle_keep].astype(np.float32, copy=False)
+        # Keep clearing points in the camera frame. VoxelLayer then raytraces
+        # from the real optical sensor origin instead of from base_link.
+        clearing_points = source_xyz[clearing_keep].astype(
+            np.float32, copy=False
+        )
         output_header = Header(
             stamp=cloud.header.stamp,
             frame_id=self.target_frame,
         )
-        return point_cloud2.create_cloud_xyz32(
+        obstacle_cloud = point_cloud2.create_cloud_xyz32(
             output_header,
             filtered_points,
         )
+        clearing_header = Header(
+            stamp=cloud.header.stamp,
+            frame_id=cloud.header.frame_id,
+        )
+        clearing_cloud = point_cloud2.create_cloud_xyz32(
+            clearing_header,
+            clearing_points,
+        )
+        return obstacle_cloud, clearing_cloud
 
     @staticmethod
     def _apply_transform(xyz, transform_stamped):

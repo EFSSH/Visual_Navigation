@@ -3,6 +3,7 @@ rgbd_obstacle_front:
     use_sim_time: true
     input_topic: /intel_realsense_r200_depth/points
     output_topic: /vision/front/obstacle_cloud
+    clearing_output_topic: /vision/front/clearing_cloud
     target_frame: base_link
     x_min: 0.20
     x_max: 3.00
@@ -17,6 +18,7 @@ rgbd_obstacle_rear:
     use_sim_time: true
     input_topic: /rear_realsense_depth/points
     output_topic: /vision/rear/obstacle_cloud
+    clearing_output_topic: /vision/rear/clearing_cloud
     target_frame: base_link
     x_min: -3.00
     x_max: -0.20

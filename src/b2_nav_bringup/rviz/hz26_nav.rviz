@@ -128,6 +128,21 @@ Visualization Manager:
               wheel_right_link: {}
     Update Interval: 0
     Value: true
+  - Alpha: 0.45
+    Class: rviz_default_plugins/Map
+    Color Scheme: costmap
+    Draw Behind: false
+    Enabled: true
+    Name: Local World Occupancy Grid
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /local_world/occupancy_grid
+    Update Topic: true
+    Use Timestamp: false
+    Value: true
   - Alpha: 1
     Autocompute Intensity Bounds: true
     Autocompute Value Bounds:
@@ -227,6 +242,40 @@ Visualization Manager:
       History Policy: Keep Last
       Reliability Policy: Best Effort
       Value: /vision/front/obstacle_cloud
+    Use Fixed Frame: true
+    Use rainbow: false
+    Value: true
+  - Alpha: 1
+    Autocompute Intensity Bounds: true
+    Autocompute Value Bounds:
+      Max Value: 10
+      Min Value: -10
+      Value: true
+    Axis: Z
+    Channel Name: intensity
+    Class: rviz_default_plugins/PointCloud2
+    Color: 255; 220; 0
+    Color Transformer: FlatColor
+    Decay Time: 0
+    Enabled: true
+    Invert Rainbow: false
+    Max Color: 255; 255; 255
+    Max Intensity: 4096
+    Min Color: 0; 0; 0
+    Min Intensity: 0
+    Name: Local World Occupied Cloud
+    Position Transformer: XYZ
+    Selectable: true
+    Size (Pixels): 4
+    Size (m): 0.025
+    Style: Points
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      Filter size: 10
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Value: /local_world/occupied_cloud
     Use Fixed Frame: true
     Use rainbow: false
     Value: true

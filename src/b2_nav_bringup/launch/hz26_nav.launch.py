@@ -28,6 +28,7 @@ def generate_launch_description():
     hz26_bringup_dir = get_package_share_directory('b2_nav_bringup')
     perception_dir = get_package_share_directory('b2_nav_perception')
     safety_dir = get_package_share_directory('b2_nav_safety')
+    twin_dir = get_package_share_directory('b2_nav_twin')
     launch_dir = os.path.join(bringup_dir, 'launch')
     robot_urdf = os.path.join(
         hz26_bringup_dir, 'urdf', 'turtlebot3_waffle_dual_rgbd.urdf'
@@ -46,6 +47,7 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration('use_rviz')
     use_rgbd_obstacles = LaunchConfiguration('use_rgbd_obstacles')
     use_lidar_safety = LaunchConfiguration('use_lidar_safety')
+    use_local_world_model = LaunchConfiguration('use_local_world_model')
     params_file = LaunchConfiguration('params_file')
     rgbd_params_file = LaunchConfiguration('rgbd_params_file')
     map_file = LaunchConfiguration('map')
@@ -157,6 +159,13 @@ def generate_launch_description():
         condition=IfCondition(use_lidar_safety),
         launch_arguments={'use_sim_time': 'true'}.items(),
     )
+    local_world_model = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(twin_dir, 'launch', 'local_world_model.launch.py')
+        ),
+        condition=IfCondition(use_local_world_model),
+        launch_arguments={'use_sim_time': 'true'}.items(),
+    )
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -194,6 +203,7 @@ def generate_launch_description():
                     )
                 ),
                 rgbd_perception,
+                local_world_model,
                 lidar_safety,
                 nav2,
                 rviz,
@@ -241,6 +251,11 @@ def generate_launch_description():
                 'use_lidar_safety',
                 default_value='True',
                 description='Use lidar only as an independent velocity safety gate.',
+            ),
+            DeclareLaunchArgument(
+                'use_local_world_model',
+                default_value='True',
+                description='Fuse front and rear RGB-D clouds in odom.',
             ),
             DeclareLaunchArgument(
                 'params_file',

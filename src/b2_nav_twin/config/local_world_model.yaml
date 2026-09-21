@@ -1,0 +1,30 @@
+local_world_model_node:
+  ros__parameters:
+    use_sim_time: true
+    front_topic: /vision/front/obstacle_cloud
+    rear_topic: /vision/rear/obstacle_cloud
+    front_clearing_topic: /vision/front/clearing_cloud
+    rear_clearing_topic: /vision/rear/clearing_cloud
+    output_topic: /local_world/occupied_cloud
+    grid_topic: /local_world/occupancy_grid
+    front_output_topic: /local_world/front/obstacle_cloud
+    rear_output_topic: /local_world/rear/obstacle_cloud
+    front_clearing_output_topic: /local_world/front/clearing_cloud
+    rear_clearing_output_topic: /local_world/rear/clearing_cloud
+    target_frame: odom
+    base_frame: base_link
+    resolution: 0.10
+    width: 8.0
+    height: 8.0
+    publish_rate_hz: 5.0
+    decay_rate_hz: 10.0
+    obstacle_ttl_sec: 1.0
+    free_space_ttl_sec: 5.0
+    decay_clear_hold_sec: 1.0
+    decay_clear_extension: 0.15
+    hit_log_odds: 0.85
+    miss_log_odds: 0.45
+    occupied_threshold: 0.50
+    clearing_ray_step: 1
+    raytrace_max_range: 3.2
+    tf_fallback_max_age_sec: 0.5
