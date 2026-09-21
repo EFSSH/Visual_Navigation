@@ -1,0 +1,27 @@
+rgbd_obstacle_front:
+  ros__parameters:
+    use_sim_time: true
+    input_topic: /intel_realsense_r200_depth/points
+    output_topic: /vision/front/obstacle_cloud
+    target_frame: base_link
+    x_min: 0.20
+    x_max: 3.00
+    y_min: -1.50
+    y_max: 1.50
+    z_min: 0.05
+    z_max: 1.50
+    point_step: 4
+
+rgbd_obstacle_rear:
+  ros__parameters:
+    use_sim_time: true
+    input_topic: /rear_realsense_depth/points
+    output_topic: /vision/rear/obstacle_cloud
+    target_frame: base_link
+    x_min: -3.00
+    x_max: -0.20
+    y_min: -1.50
+    y_max: 1.50
+    z_min: 0.05
+    z_max: 1.50
+    point_step: 4

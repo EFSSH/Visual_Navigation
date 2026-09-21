@@ -96,7 +96,10 @@ def generate_launch_description():
             DeclareLaunchArgument('obstacle_radius', default_value='0.35'),
             LogInfo(msg='Full navigation bringup scaffold started.'),
             LogInfo(
-                msg='Pending modules: sensors, localization, perception, digital twin, VLA, and real B2 driver.'
+                msg=(
+                    'Pending modules: sensors, localization, perception, '
+                    'digital twin, VLA, and real B2 driver.'
+                )
             ),
             LogInfo(
                 condition=UnlessCondition(use_fake_b2),

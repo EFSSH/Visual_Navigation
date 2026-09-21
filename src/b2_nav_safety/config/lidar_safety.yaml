@@ -1,0 +1,25 @@
+lidar_safety_node:
+  ros__parameters:
+    use_sim_time: true
+    scan_topic: /scan
+    distance_topic: /safety/lidar_min_distance
+    stop_topic: /safety/lidar_stop
+    stop_distance: 0.30
+
+safety_gate_node:
+  ros__parameters:
+    use_sim_time: true
+    input_cmd_topic: /cmd_vel
+    output_cmd_topic: /cmd_vel_safe
+    obstacle_distance_topic: /safety/lidar_min_distance
+    # Match Nav2's 0.50 m inflation area: slow inside it and reserve the
+    # smaller distance below for the independent emergency stop.
+    obstacle_stop_distance: 0.30
+    obstacle_slow_distance: 0.50
+    obstacle_timeout_sec: 0.75
+    fail_safe_on_obstacle_timeout: true
+    cmd_timeout_sec: 0.50
+    max_linear_x: 0.25
+    max_linear_y: 0.20
+    max_angular_z: 0.60
+    publish_rate_hz: 20.0

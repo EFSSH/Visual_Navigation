@@ -47,10 +47,16 @@ def generate_launch_description():
             DeclareLaunchArgument('goal_x', default_value='5.0'),
             DeclareLaunchArgument('goal_y', default_value='0.0'),
             LogInfo(
-                msg='real_b2_node is not implemented yet. Start the B2 driver separately or add it to b2_nav_robot later.'
+                msg=(
+                    'real_b2_node is not implemented yet. Start the B2 '
+                    'driver separately or add it to b2_nav_robot later.'
+                )
             ),
             LogInfo(
-                msg='This launch waits for a real /robot/odom source and publishes safe commands on /b2/cmd_vel.'
+                msg=(
+                    'This launch waits for a real /robot/odom source and '
+                    'publishes safe commands on /b2/cmd_vel.'
+                )
             ),
             safety_gate_node,
             simple_planner_node,

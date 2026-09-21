@@ -20,6 +20,13 @@ class SafetyGateNode(Node):
         self.declare_parameter('obstacle_slow_distance', 1.0)
         self.declare_parameter('obstacle_timeout_sec', 1.0)
         self.declare_parameter('publish_rate_hz', 20.0)
+        self.declare_parameter('input_cmd_topic', '/nav/cmd_vel_raw')
+        self.declare_parameter('output_cmd_topic', '/b2/cmd_vel')
+        self.declare_parameter(
+            'obstacle_distance_topic',
+            '/perception/nearest_obstacle_distance',
+        )
+        self.declare_parameter('fail_safe_on_obstacle_timeout', True)
 
         self.max_linear_x = self.get_parameter('max_linear_x').value
         self.max_linear_y = self.get_parameter('max_linear_y').value
@@ -29,28 +36,35 @@ class SafetyGateNode(Node):
         self.obstacle_slow_distance = self.get_parameter('obstacle_slow_distance').value
         self.obstacle_timeout_sec = self.get_parameter('obstacle_timeout_sec').value
         self.publish_rate_hz = self.get_parameter('publish_rate_hz').value
+        input_cmd_topic = self.get_parameter('input_cmd_topic').value
+        output_cmd_topic = self.get_parameter('output_cmd_topic').value
+        obstacle_topic = self.get_parameter('obstacle_distance_topic').value
+        self.fail_safe = self.get_parameter(
+            'fail_safe_on_obstacle_timeout'
+        ).value
 
         self.last_raw_cmd = Twist()
         self.last_raw_cmd_time = self.get_clock().now()
         self.last_obstacle_distance = None
         self.last_obstacle_time = self.get_clock().now()
 
-        self.safe_cmd_pub = self.create_publisher(Twist, '/b2/cmd_vel', 10)
+        self.safe_cmd_pub = self.create_publisher(Twist, output_cmd_topic, 10)
         self.raw_cmd_sub = self.create_subscription(
             Twist,
-            '/nav/cmd_vel_raw',
+            input_cmd_topic,
             self.on_raw_cmd,
             10,
         )
         self.obstacle_sub = self.create_subscription(
             Float32,
-            '/perception/nearest_obstacle_distance',
+            obstacle_topic,
             self.on_obstacle_distance,
             10,
         )
         self.timer = self.create_timer(1.0 / self.publish_rate_hz, self.on_timer)
         self.get_logger().info(
-            'safety_gate_node started: /nav/cmd_vel_raw + obstacle distance -> /b2/cmd_vel'
+            f'safety gate: {input_cmd_topic} + {obstacle_topic} -> '
+            f'{output_cmd_topic}'
         )
 
     def on_raw_cmd(self, msg):
@@ -63,11 +77,11 @@ class SafetyGateNode(Node):
 
     def get_obstacle_speed_scale(self, now):
         if self.last_obstacle_distance is None:
-            return 1.0
+            return 0.0 if self.fail_safe else 1.0
 
         obstacle_age = (now - self.last_obstacle_time).nanoseconds * 1e-9
         if obstacle_age > self.obstacle_timeout_sec:
-            return 1.0
+            return 0.0 if self.fail_safe else 1.0
 
         distance = self.last_obstacle_distance
         if distance <= self.obstacle_stop_distance:

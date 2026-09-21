@@ -119,7 +119,6 @@ class InitialPosePublisher(Node):
                     self.get_logger().error(f'Failed to activate {name}.')
 
 
-
 def main():
     rclpy.init()
     node = InitialPosePublisher()

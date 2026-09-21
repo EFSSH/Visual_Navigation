@@ -15,10 +15,20 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     rgbd_params_file = LaunchConfiguration('rgbd_params_file')
 
-    obstacle_node = Node(
+    front_obstacle_node = Node(
         package='b2_nav_perception',
         executable='rgbd_obstacle_node',
-        name='rgbd_obstacle_node',
+        name='rgbd_obstacle_front',
+        output='screen',
+        parameters=[
+            rgbd_params_file,
+            {'use_sim_time': use_sim_time},
+        ],
+    )
+    rear_obstacle_node = Node(
+        package='b2_nav_perception',
+        executable='rgbd_obstacle_node',
+        name='rgbd_obstacle_rear',
         output='screen',
         parameters=[
             rgbd_params_file,
@@ -38,10 +48,11 @@ def generate_launch_description():
                 default_value=os.path.join(
                     package_dir,
                     'config',
-                    'rgbd_obstacle.yaml',
+                    'rgbd_obstacles_dual.yaml',
                 ),
                 description='RGB-D obstacle-node parameter file.',
             ),
-            obstacle_node,
+            front_obstacle_node,
+            rear_obstacle_node,
         ]
     )

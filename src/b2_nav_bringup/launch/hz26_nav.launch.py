@@ -27,9 +27,14 @@ def generate_launch_description():
     bringup_dir = get_package_share_directory('nav2_bringup')
     hz26_bringup_dir = get_package_share_directory('b2_nav_bringup')
     perception_dir = get_package_share_directory('b2_nav_perception')
+    safety_dir = get_package_share_directory('b2_nav_safety')
     launch_dir = os.path.join(bringup_dir, 'launch')
-    robot_urdf = os.path.join(bringup_dir, 'urdf', 'turtlebot3_waffle.urdf')
-    robot_sdf = os.path.join(bringup_dir, 'worlds', 'waffle.model')
+    robot_urdf = os.path.join(
+        hz26_bringup_dir, 'urdf', 'turtlebot3_waffle_dual_rgbd.urdf'
+    )
+    robot_sdf = os.path.join(
+        hz26_bringup_dir, 'models', 'waffle_dual_rgbd.model'
+    )
 
     with open(robot_urdf, 'r', encoding='utf-8') as urdf_file:
         robot_description = urdf_file.read()
@@ -40,6 +45,7 @@ def generate_launch_description():
     headless = LaunchConfiguration('headless')
     use_rviz = LaunchConfiguration('use_rviz')
     use_rgbd_obstacles = LaunchConfiguration('use_rgbd_obstacles')
+    use_lidar_safety = LaunchConfiguration('use_lidar_safety')
     params_file = LaunchConfiguration('params_file')
     rgbd_params_file = LaunchConfiguration('rgbd_params_file')
     map_file = LaunchConfiguration('map')
@@ -144,6 +150,13 @@ def generate_launch_description():
             'rgbd_params_file': rgbd_params_file,
         }.items(),
     )
+    lidar_safety = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(safety_dir, 'launch', 'lidar_safety.launch.py')
+        ),
+        condition=IfCondition(use_lidar_safety),
+        launch_arguments={'use_sim_time': 'true'}.items(),
+    )
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -181,6 +194,7 @@ def generate_launch_description():
                     )
                 ),
                 rgbd_perception,
+                lidar_safety,
                 nav2,
                 rviz,
                 initial_pose_publisher,
@@ -224,6 +238,11 @@ def generate_launch_description():
                 description='Start RGB-D filtering and feed it to local costmap.',
             ),
             DeclareLaunchArgument(
+                'use_lidar_safety',
+                default_value='True',
+                description='Use lidar only as an independent velocity safety gate.',
+            ),
+            DeclareLaunchArgument(
                 'params_file',
                 default_value=os.path.join(
                     hz26_bringup_dir,
@@ -236,7 +255,7 @@ def generate_launch_description():
                 default_value=os.path.join(
                     perception_dir,
                     'config',
-                    'rgbd_obstacle.yaml',
+                    'rgbd_obstacles_dual.yaml',
                 ),
             ),
             DeclareLaunchArgument(

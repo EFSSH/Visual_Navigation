@@ -197,7 +197,8 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.55
+        # Keep planned paths 0.20 m beyond the 0.30 m emergency-stop limit.
+        inflation_radius: 0.50
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
@@ -207,19 +208,20 @@ local_costmap:
         z_voxels: 16
         max_obstacle_height: 1.5
         mark_threshold: 0
-        observation_sources: scan rgbd_cloud
-        scan:
-          topic: /scan
-          max_obstacle_height: 2.0
+        observation_sources: front_rgbd rear_rgbd
+        front_rgbd:
+          topic: /vision/front/obstacle_cloud
+          min_obstacle_height: 0.05
+          max_obstacle_height: 1.5
           clearing: True
           marking: True
-          data_type: "LaserScan"
-          raytrace_max_range: 3.0
-          raytrace_min_range: 0.0
-          obstacle_max_range: 2.5
-          obstacle_min_range: 0.0
-        rgbd_cloud:
-          topic: /vision/obstacle_cloud
+          data_type: "PointCloud2"
+          raytrace_max_range: 3.2
+          raytrace_min_range: 0.2
+          obstacle_max_range: 3.0
+          obstacle_min_range: 0.2
+        rear_rgbd:
+          topic: /vision/rear/obstacle_cloud
           min_obstacle_height: 0.05
           max_obstacle_height: 1.5
           clearing: True
@@ -245,28 +247,16 @@ global_costmap:
       robot_radius: 0.22
       resolution: 0.05
       track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: True
-        observation_sources: scan
-        scan:
-          topic: /scan
-          max_obstacle_height: 2.0
-          clearing: True
-          marking: True
-          data_type: "LaserScan"
-          raytrace_max_range: 3.0
-          raytrace_min_range: 0.0
-          obstacle_max_range: 2.5
-          obstacle_min_range: 0.0
+      # Dynamic obstacles are handled by the dual RGB-D local costmap.
+      # The global costmap stays stable and map-based.
+      plugins: ["static_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.55
+        inflation_radius: 0.50
       always_send_full_costmap: True
 
 map_server:
