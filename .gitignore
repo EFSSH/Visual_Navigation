@@ -38,3 +38,8 @@ log/
 .idea/
 .DS_Store
 Thumbs.db
+
+# ExFAT metadata and local migration reports
+._*
+migration/*.log
+migration/*.tsv

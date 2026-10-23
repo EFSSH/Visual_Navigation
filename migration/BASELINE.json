@@ -1,0 +1,19 @@
+{
+  "source_repository": "https://github.com/EFSSH/Visual_Navigation.git",
+  "source_branch": "codex/local-world-model",
+  "source_commit": "9c2475eb203596f54c70f822059e9be33b072eb7",
+  "remote_checked_branch": "codex/semantic-world-model",
+  "remote_checked_commit": "9c2475eb203596f54c70f822059e9be33b072eb7",
+  "local_branch": "codex/thor-migration",
+  "target": "Ubuntu 24.04 ARM64 / ROS 2 Jazzy / future AGX Thor",
+  "date": "2026-10-19",
+  "scope": "Tracked framework source, maps and configuration; no remote machine changes",
+  "excluded_remote_local_assets": [
+    "sim_assets/ (HZ26 scene and external Gazebo models)",
+    "b2_nav_sim (ignored local legacy stub)",
+    "build/",
+    "install/",
+    "log/",
+    "recordings and model weights"
+  ]
+}

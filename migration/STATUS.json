@@ -1,0 +1,25 @@
+{
+  "status": "framework_migrated_and_locally_verified",
+  "date": "2026-10-19",
+  "source_commit": "9c2475eb203596f54c70f822059e9be33b072eb7",
+  "build_packages": 9,
+  "existing_functional_tests_passed": 14,
+  "checks": [
+    "rosdep satisfied",
+    "launch argument parsing",
+    "nine Nav2 lifecycle servers configure",
+    "map server activation",
+    "front and rear PointCloud2 to occupied grid",
+    "obstacle TTL expiry",
+    "missing-input zero velocity safety",
+    "clean launch shutdown"
+  ],
+  "pending": [
+    "Windows/WSL ROS communication",
+    "full simulation navigation",
+    "untracked HZ26 scene assets",
+    "AGX Thor hardware deployment"
+  ],
+  "remote_modified": false,
+  "pushed": false
+}
