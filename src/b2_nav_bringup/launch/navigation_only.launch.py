@@ -47,6 +47,11 @@ def generate_launch_description():
             'params_file',
             default_value=os.path.join(share, 'config', 'nav2_jazzy_params.yaml'),
         ),
+        DeclareLaunchArgument('use_initial_pose', default_value='true'),
+        # Must match the spawn pose given to hz26_sim_device.launch.py.
+        DeclareLaunchArgument('initial_x', default_value='-7.0'),
+        DeclareLaunchArgument('initial_y', default_value='-25.0'),
+        DeclareLaunchArgument('initial_yaw', default_value='1.5708'),
     ]
 
     # Every generated velocity passes through the existing independent gate.
@@ -81,6 +86,21 @@ def generate_launch_description():
             'use_sim_time': use_sim_time,
             'autostart': autostart,
             'node_names': [entry[2] for entry in servers],
+        }],
+    ))
+    # Runs here rather than on the device host so the AMCL and map_server
+    # lifecycle services it may call stay within the same ROS distribution.
+    # The timeout is long because the remote simulation may start later.
+    actions.append(Node(
+        package='b2_nav_bringup', executable='hz26_initial_pose',
+        name='hz26_initial_pose_publisher', output='screen',
+        condition=IfCondition(LaunchConfiguration('use_initial_pose')),
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'initial_x': LaunchConfiguration('initial_x'),
+            'initial_y': LaunchConfiguration('initial_y'),
+            'initial_yaw': LaunchConfiguration('initial_yaw'),
+            'timeout_sec': 180.0,
         }],
     ))
 
