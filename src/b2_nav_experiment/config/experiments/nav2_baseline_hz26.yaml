@@ -1,0 +1,20 @@
+# Nav2 baseline on HZ26. Copy and edit per experiment; the run directory
+# stores a snapshot of this file, the task, code version and param hashes.
+name: nav2-baseline-hz26
+scenario: hz26_visual_deck
+route_id: example-route
+source_label: nav2_baseline
+# Leave empty to record only (drive with RViz goals or a model adapter).
+task_file: ''
+warmup_sec: 5.0
+max_duration_sec: 900.0
+# Front/rear RGB and depth add about 3 MB/s before compression.
+include_images: true
+extra_topics: []
+param_files:
+  - b2_nav_bringup/config/nav2_jazzy_params.yaml
+  - b2_nav_safety/config/lidar_safety.yaml
+  - b2_nav_execution/config/trajectory_executor.yaml
+  - b2_nav_perception/config/rgbd_obstacles_dual.yaml
+  - b2_nav_twin/config/local_world_model.yaml
+notes: ''

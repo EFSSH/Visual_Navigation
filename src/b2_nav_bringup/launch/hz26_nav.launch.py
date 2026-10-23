@@ -175,6 +175,15 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
         output='screen',
     )
+    # The model's diff drive listens to /cmd_vel_device, fed only by this
+    # watchdog from the safety gate's /cmd_vel_safe.
+    cmd_watchdog = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('b2_nav_robot'),
+            'launch', 'cmd_watchdog.launch.py',
+        )),
+        launch_arguments={'use_sim_time': 'true'}.items(),
+    )
     initial_pose_publisher = Node(
         package='b2_nav_bringup',
         executable='hz26_initial_pose',
@@ -295,6 +304,7 @@ def generate_launch_description():
             gzserver,
             gzclient,
             robot_state_publisher,
+            cmd_watchdog,
             start_navigation_after_spawn,
             spawn_robot,
         ]

@@ -534,7 +534,9 @@
           <!--since gazebo_plugins publish tf topic in global namespace /tf only and it
             cannot be remapped like (namespace/tf) through launch arguments -->
           <remapping>/tf:=tf</remapping>
-          <remapping>cmd_vel:=cmd_vel_safe</remapping>
+          <!-- Only b2_nav_robot/cmd_watchdog_node publishes here; it forwards
+               /cmd_vel_safe and stops the base when commands time out. -->
+          <remapping>cmd_vel:=cmd_vel_device</remapping>
         </ros>
 
         <update_rate>30</update_rate>
@@ -551,7 +553,7 @@
         <max_wheel_torque>20</max_wheel_torque>
         <max_wheel_acceleration>1.0</max_wheel_acceleration>
 
-        <command_topic>cmd_vel_safe</command_topic>
+        <command_topic>cmd_vel_device</command_topic>
 
         <!-- output -->
         <publish_odom>true</publish_odom>

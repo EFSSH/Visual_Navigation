@@ -9,7 +9,13 @@
 
   <exec_depend>b2_nav_planning</exec_depend>
   <exec_depend>b2_nav_perception</exec_depend>
+  <exec_depend>b2_nav_robot</exec_depend>
   <exec_depend>b2_nav_safety</exec_depend>
+  <!-- Mission layer; navigation host only. -->
+  <exec_depend condition="$ROS_DISTRO != 'humble'">b2_nav_execution</exec_depend>
+  <exec_depend condition="$ROS_DISTRO != 'humble'">b2_nav_experiment</exec_depend>
+  <exec_depend condition="$ROS_DISTRO != 'humble'">b2_nav_search</exec_depend>
+  <exec_depend condition="$ROS_DISTRO != 'humble'">b2_nav_task</exec_depend>
   <!-- Legacy simulation remains on the Humble device host. -->
   <exec_depend condition="$ROS_DISTRO == 'humble'">b2_nav_sim</exec_depend>
   <exec_depend>b2_nav_twin</exec_depend>

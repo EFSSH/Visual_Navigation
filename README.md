@@ -9,15 +9,19 @@
 新增独立的 `navigation_only.launch.py` 和 Jazzy 参数，Mac 导航端不启动 Gazebo 或设备驱动。
 原有 Humble 启动文件与参数保留，供旧电脑基线查阅。
 
+任务层（`b2_nav_task`、`b2_nav_execution`、`b2_nav_search`）、设备端看门狗（`b2_nav_robot`）、实验记录与分析（`b2_nav_experiment`）以及不依赖 ROS 的训练评价代码（`learning/`）见 [任务层架构](docs/MISSION.md)。
+
 ```text
 远端仿真／未来 B2：点云、激光、odom、TF、仿真 clock
                          ↓
-双 RGB-D 预处理 → 2.5D 局部几何地图 → Nav2 / DWB
+双 RGB-D 预处理 → 2.5D 局部几何地图 → Nav2（DWB 基线 / TrackPath 跟踪学习轨迹）
                                            ↓ /cmd_vel_nav
                                       速度平滑
                                            ↓ /cmd_vel
                                       原激光安全门
-                                           ↓ /cmd_vel_safe
+                                           ↓ /cmd_vel_safe（跨机）
+                              设备端指令看门狗（0.5 s 超时停车）
+                                           ↓ /cmd_vel_device
                                     远端仿真／未来 B2
 ```
 
@@ -59,8 +63,8 @@ ros2 launch b2_nav_bringup navigation_only.launch.py use_sim_time:=false
 
 - 已迁入的是与远端提交一致的**入库框架**。远端未入库的 HZ26 场景资源、旧假 B2 节点、数据、权重和构建缓存未复制。
 - 新入口需要设备端提供 `odom → base_footprint → base_link` 和传感器 TF；AMCL 负责 `map → odom`。导航端不重复发布设备 TF。
-- 不自动发布初始位姿，需通过 RViz 或 `/initialpose` 初始化定位。
-- 旧 Windows/WSL 仿真仍是 Humble/Gazebo Classic。跨版本通信与 Gazebo Harmonic 迁移尚未验收，不能直接认为已经打通双机导航。
-- 学习模型、全局数字孪生、任务管理和末端图像查找尚未新增。
+- `navigation_only.launch.py` 默认在导航端按出生点发布初始位姿（`use_initial_pose:=false` 可关闭）；仿真一直运行时，重启导航前先在仿真端 `ros2 service call /reset_world std_srvs/srv/Empty`。
+- WSL 仿真端（Humble/Gazebo Classic）用 `hz26_sim_device.launch.py`，只启动 Gazebo、robot_state_publisher、看门狗和机器人生成。局域网 DDS 已打通，双机闭环导航尚未验收。
+- 学习模型、模型适配器和全局数字孪生路线生成尚未实现；任务路线暂由任务文件给出。
 
 详细变更与验证范围见 [迁移记录](docs/MIGRATION.md)。

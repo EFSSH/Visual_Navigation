@@ -1,0 +1,20 @@
+# Example HZ26 inspection task. Route poses are placeholders in the map
+# frame near the default spawn (-7.0, -25.0); replace them with surveyed
+# poses, and the device_id with an entry from the reference library.
+task_id: hz26-example
+device_id: EXAMPLE-DEVICE
+region: hz26_visual_deck
+route:
+  - {x: -7.0, y: -23.5, yaw: 1.5708}
+  - {x: -7.0, y: -22.0, yaw: 1.5708}
+search:
+  max_attempts: 4
+  attempt_timeout_sec: 15.0
+  spin_step_rad: 1.5708
+retries:
+  subgoal: 1
+timeouts_sec:
+  preflight: 30.0
+  localization: 60.0
+  subgoal: 300.0
+  observation: 120.0

@@ -12,10 +12,12 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
+    IncludeLaunchDescription,
     LogInfo,
     SetEnvironmentVariable,
 )
 from launch.conditions import IfCondition, UnlessCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     EnvironmentVariable,
     LaunchConfiguration,
@@ -120,6 +122,15 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
         output='screen',
     )
+    # The diff drive listens to /cmd_vel_device; the watchdog forwards the
+    # remote /cmd_vel_safe and stops the base if the navigation host is lost.
+    cmd_watchdog = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('b2_nav_robot'),
+            'launch', 'cmd_watchdog.launch.py',
+        )),
+        launch_arguments={'use_sim_time': 'true'}.items(),
+    )
 
     return LaunchDescription(
         [
@@ -159,6 +170,7 @@ def generate_launch_description():
             gzserver,
             gzclient,
             robot_state_publisher,
+            cmd_watchdog,
             spawn_robot,
             rviz,
         ]

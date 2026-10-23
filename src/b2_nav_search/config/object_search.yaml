@@ -1,0 +1,22 @@
+object_search_node:
+  ros__parameters:
+    use_sim_time: true
+    # Reference library root; overridden by the launch argument.
+    library_dir: ''
+    request_topic: /search/request
+    result_topic: /search/result
+    observation_goal_topic: /search/observation_goal
+    # Front camera of the HZ26 Waffle model. Subscribed only during a search.
+    image_topic: /intel_realsense_r200_depth/image_raw
+    depth_topic: /intel_realsense_r200_depth/depth/image_raw
+    camera_info_topic: /intel_realsense_r200_depth/camera_info
+    map_topic: /map
+    map_frame: map
+    robot_frame: base_link
+    default_timeout_sec: 20.0
+    # ORB on 320x240 frames; 2 Hz keeps one core free for navigation.
+    max_process_rate_hz: 2.0
+    min_view_interval_sec: 0.5
+    # Static map cells below this value count as free for the stand-off pose.
+    map_free_threshold: 50
+    n_features: 1000

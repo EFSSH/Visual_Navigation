@@ -14,6 +14,8 @@ if [[ ! -f "$WS/.navigation-migration-workspace" ]]; then
   printf '%s\n' "$SOURCE" > "$WS/.navigation-migration-workspace"
 fi
 rsync -rlt --delete --exclude='._*' --exclude='__pycache__/' --exclude='.pytest_cache/' "$SOURCE/src/" "$WS/src/"
+# ROS-independent training and evaluation code (not a colcon package).
+rsync -rlt --delete --exclude='._*' --exclude='__pycache__/' --exclude='.pytest_cache/' "$SOURCE/learning/" "$WS/learning/"
 cd "$WS"
 case "$MODE" in
   sync) ;;
@@ -21,7 +23,16 @@ case "$MODE" in
   build) colcon build --symlink-install --event-handlers console_direct+ ;;
   test)
     source install/setup.bash
-    python3 -m pytest -q src/b2_nav_twin/test/test_local_world_model.py src/b2_nav_safety/test/test_lidar_safety.py src/b2_nav_planning/test/test_planner_geometry.py
+    python3 -m pytest -q \
+      src/b2_nav_twin/test/test_local_world_model.py \
+      src/b2_nav_safety/test/test_lidar_safety.py \
+      src/b2_nav_planning/test/test_planner_geometry.py \
+      src/b2_nav_robot/test/test_cmd_watchdog.py \
+      src/b2_nav_execution/test/test_trajectory_check.py \
+      src/b2_nav_task/test/test_state_machine.py \
+      src/b2_nav_search/test/test_search.py \
+      src/b2_nav_experiment/test/test_analysis.py
+    PYTHONPATH="$WS/learning" python3 -m pytest -q learning/tests
     ;;
   *) echo "Usage: $0 {sync|deps|build|test}" >&2; exit 2 ;;
 esac

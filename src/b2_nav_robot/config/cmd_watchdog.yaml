@@ -1,0 +1,13 @@
+cmd_watchdog_node:
+  ros__parameters:
+    use_sim_time: true
+    # The navigation host's safety gate publishes here at 20 Hz.
+    input_cmd_topic: /cmd_vel_safe
+    # The simulated diff drive (and later the B2 driver) listens here only.
+    output_cmd_topic: /cmd_vel_device
+    estop_topic: /robot/estop
+    state_topic: /robot/watchdog_state
+    # Ten missed gate cycles; longer than LAN jitter, short enough to stop
+    # within a few centimetres at 0.25 m/s.
+    cmd_timeout_sec: 0.50
+    publish_rate_hz: 30.0
