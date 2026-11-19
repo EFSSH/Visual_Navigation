@@ -21,7 +21,10 @@ are separate. The agent reacts to line of sight; everything the robot
 records uses detection. Detection probability drops at close range, where a
 camera-based person detector sees a truncated body, and misses are
 correlated over time. The default is ideal detection (detected iff in line
-of sight), which reproduces the first version exactly.
+of sight), which reproduces the first version exactly. ``sensor`` selects
+a sensor-specific model instead (camera, 2D lidar, or their fusion; see
+``sensors.py``), with frames at ``sensor_rate_hz`` and tracker
+interpolation between consecutive detections.
 
 Branch replay: all randomness of an episode (agent parameters and
 per-step acceleration noise) is drawn from that episode's own seed before
@@ -36,6 +39,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 from .geometry import line_of_sight
+from .sensors import channel_probs, frame_period, reliable, track_frames
 
 ACTIONS = ('go', 'slow', 'yield')
 GO, SLOW, YIELD = 0, 1, 2
@@ -74,6 +78,26 @@ class Scenario:
     det_min_range: float = 0.5        # ... down to det_p_near at this distance
     det_p_near: float = 1.0
     det_corr: float = 0.0             # 0 independent misses per frame, 1 fully persistent
+    # Sensor-specific detection (sensors.py); 'abstract' uses det_* above.
+    sensor: str = 'abstract'          # 'abstract', 'camera', 'lidar' or 'fusion'
+    sensor_rate_hz: float = 5.0       # Gazebo: both depth cameras and the laser at 5 Hz
+    person_height: float = 1.7
+    body_half_width: float = 0.25
+    cam_hfov_deg: float = 60.0        # Gazebo default optics of the RealSense model
+    cam_vfov_deg: float = 46.8        # 320 x 240 at 60 deg horizontal
+    cam_height: float = 0.11          # front camera above the floor
+    cam_rear_height: float = 0.18     # rear camera, facing backwards; < 0 disables
+    cam_max_range: float = 5.0        # depth limit of the camera plugin
+    cam_area_lo: float = 0.25         # visible body fraction: never / always detected
+    cam_area_hi: float = 0.55
+    lidar_leg_half_span: float = 0.2  # half width of both legs at 0.15 m height
+    lidar_res_deg: float = 1.0
+    lidar_min_range: float = 0.12
+    lidar_max_range: float = 20.0
+    lidar_points_lo: float = 2.0      # points on the legs: never / always detected
+    lidar_points_hi: float = 4.0
+    lidar_gap_lo: float = 0.05        # leg-to-wall gap (m): merged / separate cluster
+    lidar_gap_hi: float = 0.15
 
     @property
     def times(self):
@@ -163,6 +187,9 @@ def sample_episodes(scn, seeds):
         'det_u_episode': np.empty(n),
         'det_u': np.empty((n, scn.horizon + 1)),
         'det_share': np.empty((n, scn.horizon + 1)),
+        'det2_u_episode': np.empty(n),
+        'det2_u': np.empty((n, scn.horizon + 1)),
+        'det2_share': np.empty((n, scn.horizon + 1)),
     }
     for i, seed in enumerate(seeds):
         rng = np.random.default_rng(int(seed))
@@ -179,6 +206,10 @@ def sample_episodes(scn, seeds):
         out['det_u_episode'][i] = rng.uniform()
         out['det_u'][i] = rng.uniform(size=scn.horizon + 1)
         out['det_share'][i] = rng.uniform(size=scn.horizon + 1)
+        # Second detection channel (lidar in fusion); drawn last for the same reason.
+        out['det2_u_episode'][i] = rng.uniform()
+        out['det2_u'][i] = rng.uniform(size=scn.horizon + 1)
+        out['det2_share'][i] = rng.uniform(size=scn.horizon + 1)
     return out
 
 
@@ -227,10 +258,15 @@ def detected(scn, world, step, robot_p, agent_p, los):
     a fresh one otherwise. Draws are part of the episode seed, and the same
     across branches, so branch replay stays exact.
     """
-    shared = world['det_share'][:, step] < scn.det_corr
-    u = np.where(shared, world['det_u_episode'], world['det_u'][:, step])
-    dist = np.linalg.norm(np.asarray(robot_p) - np.asarray(agent_p), axis=-1)
-    return los & (u < detection_prob(scn, dist))
+    def uniforms(prefix):
+        shared = world[prefix + '_share'][:, step] < scn.det_corr
+        return np.where(shared, world[prefix + '_u_episode'], world[prefix + '_u'][:, step])
+
+    if scn.sensor == 'abstract':
+        dist = np.linalg.norm(np.asarray(robot_p) - np.asarray(agent_p), axis=-1)
+        return los & (uniforms('det') < detection_prob(scn, dist))
+    probs = channel_probs(scn, robot_p, agent_p)
+    return np.logical_or.reduce([uniforms(prefix) < p for prefix, p in zip(('det', 'det2'), probs)])
 
 
 def simulate(scn, world, action, with_los=False):
@@ -266,6 +302,7 @@ def simulate(scn, world, action, with_los=False):
         agent[:, k + 1, 1] = agent[:, k, 1] - speed * scn.dt
         los[:, k + 1] = visible(scn, robot[:, k + 1], agent[:, k + 1])
         det[:, k + 1] = detected(scn, world, k + 1, robot[:, k + 1], agent[:, k + 1], los[:, k + 1])
+    det = track_frames(det, frame_period(scn))
     return (robot, agent, det, los) if with_los else (robot, agent, det)
 
 
@@ -280,6 +317,24 @@ def hidden_lane_start(scn):
     return min([scn.corridor_half_width] + [box[1][0] for box in scn.occluders])
 
 
+def sensed_region(scn, robot_p, points, chunk=250):
+    """
+    (n, P): whether a static agent at each point would be detected for sure.
+
+    Abstract model: line of sight (the first version's occlusion boundary).
+    Sensor models: certain detection by at least one sensor, so the
+    boundary also covers the field of view, depth limit and point density.
+    """
+    robot_p = np.asarray(robot_p, float)
+    if scn.sensor == 'abstract':
+        return visible(scn, robot_p[:, None, :], points[None])
+    out = np.empty((len(robot_p), len(points)), dtype=bool)
+    for start in range(0, len(robot_p), chunk):
+        sl = slice(start, start + chunk)
+        out[sl] = reliable(scn, robot_p[sl, None, :], points[None])
+    return out
+
+
 def perceive(scn, world):
     """
     What the robot knows at the decision time.
@@ -288,7 +343,8 @@ def perceive(scn, world):
     or in line of sight but missed).
     ``agent_obs0``: noisy (x, y, vx, vy) of the agent if detected, else NaN.
     ``phantom_p0``: the nearest point of the agent's lane that is out of
-    line of sight (occluded or out of range), i.e. the occlusion boundary.
+    line of sight (occluded or out of range), i.e. the occlusion boundary;
+    with a sensor model, the nearest point the sensors do not cover for sure.
     """
     n = len(world['robot_x0'])
     robot0 = np.stack([world['robot_x0'], np.zeros(n)], -1)
@@ -302,7 +358,7 @@ def perceive(scn, world):
     obs[hidden0] = np.nan
     grid_y = np.arange(hidden_lane_start(scn), scn.sensor_range + 10.0, 0.05)
     points = np.stack([np.full_like(grid_y, scn.agent_x_center), grid_y], -1)
-    seen = visible(scn, robot0[:, None, :], points[None])
+    seen = sensed_region(scn, robot0, points)
     first_hidden = np.argmax(~seen, axis=1)
     phantom = np.stack([np.full(n, scn.agent_x_center), grid_y[first_hidden]], -1)
     return {

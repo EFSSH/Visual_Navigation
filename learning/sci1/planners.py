@@ -10,7 +10,7 @@ differences come from calibration alone.
 import numpy as np
 
 from .predictors import candidate_robot_trajs
-from .sim2d import hidden_lane_start, visible, YIELD
+from .sim2d import hidden_lane_start, sensed_region, YIELD
 
 
 def select_action(bounds, d_safe):
@@ -29,7 +29,9 @@ def worst_case_bounds(scn, state, grid_step=0.25, chunk=500):
     lane that the robot cannot vouch for - out of line of sight, or, when the
     detector degrades at close range, closer than ``det_near_range``. The
     bound ignores walls, so it is conservative. It assumes detection beyond
-    ``det_near_range`` is reliable (``det_p_far`` = 1).
+    ``det_near_range`` is reliable (``det_p_far`` = 1). With a sensor model,
+    the points not certainly covered by any sensor are unknown, dilated by
+    one grid step along the lane.
     """
     robots = candidate_robot_trajs(scn, state)[:, :, 1:]          # (n, A, H, 2)
     reach = scn.agent_speed_max * scn.times[1:]                     # (H,)
@@ -52,7 +54,13 @@ def worst_case_bounds(scn, state, grid_step=0.25, chunk=500):
         d_vis = np.linalg.norm(r - p, axis=-1) - reach - obs_margin
         lb_vis = np.nan_to_num(d_vis, nan=np.inf).min(-1)
         # Hidden agent: phantom anywhere in the hidden part of the corridor.
-        unseen = ~visible(scn, robot0[sl, None, :], grid[None])     # (m, P)
+        unseen = ~sensed_region(scn, robot0[sl], grid)               # (m, P)
+        if scn.sensor != 'abstract':
+            lanes = unseen.reshape(len(unseen), len(lateral), len(ys))
+            grown = lanes.copy()
+            grown[..., 1:] |= lanes[..., :-1]
+            grown[..., :-1] |= lanes[..., 1:]
+            unseen = grown.reshape(unseen.shape)
         if unreliable > 0:
             near = np.linalg.norm(robot0[sl, None, :] - grid[None], axis=-1)
             unseen = unseen | (near < unreliable + grid_margin)

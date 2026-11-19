@@ -221,3 +221,57 @@ def test_worst_case_bound_is_valid_with_close_range_misses(scn):
     state = perceive(scn, world)
     robots, agents, _ = simulate_branches(scn, world)
     assert (clearance(robots, agents) >= worst_case_bounds(scn, state)).all()
+
+
+from sci1.sensors import camera_prob, lidar_prob, track_frames  # noqa: E402
+
+
+def test_camera_field_of_view_and_truncation():
+    scn = meeting_scenario(sensor='camera')
+    robot = np.zeros(2)
+    p = camera_prob(scn, robot, np.array([[3.0, 0.0], [3.0, 3.0], [0.6, 0.0], [-3.0, 0.0],
+                                          [8.0, 0.0]]))
+    assert p[0] == 1.0          # ahead, whole body in view
+    assert p[1] == 0.0          # 45 deg to the side: outside both cameras
+    assert p[2] < 0.2           # close: the low camera sees only the legs
+    assert p[3] == 1.0          # behind: rear camera
+    assert p[4] == 0.0          # beyond the depth limit
+    raised = meeting_scenario(sensor='camera', cam_height=1.0)
+    assert camera_prob(raised, robot, np.array([0.6, 0.0])) > p[2]
+
+
+def test_lidar_range_density_and_wall_merge():
+    scn = meeting_scenario(sensor='lidar')
+    robot = np.zeros(2)
+    p = lidar_prob(scn, robot, np.array([[3.0, 0.0], [0.0, 3.0], [15.0, 0.0]]))
+    assert p[0] == 1.0 and p[1] == 1.0 and p[2] == 0.0   # 360 deg; sparse far away
+    walled = wall_hug_scenario(sensor='lidar')
+    hugging = lidar_prob(walled, np.array([-0.7, -3.0]), np.array([-0.75, 2.0]))
+    free = lidar_prob(walled, np.array([-0.7, -3.0]), np.array([-0.3, 2.0]))
+    assert hugging < free
+
+
+def test_track_frames_fills_only_between_detected_frames():
+    det = np.array([[1, 1, 1, 0, 0, 1, 1]], dtype=bool)
+    assert track_frames(det, 2).tolist() == [[True, True, True, False, False, False, True]]
+    det = np.array([[1, 0, 1, 1, 1]], dtype=bool)
+    assert track_frames(det, 2).tolist() == [[True, True, True, True, True]]
+    assert track_frames(det, 1) is det
+
+
+def test_fusion_detects_at_least_what_the_camera_does():
+    seeds = episode_seeds(14, 300)
+    cam, fus = wall_hug_scenario(sensor='camera'), wall_hug_scenario(sensor='fusion')
+    _, _, det_cam = simulate_branches(cam, sample_episodes(cam, seeds))
+    _, _, det_fus = simulate_branches(fus, sample_episodes(fus, seeds))
+    assert not (det_cam & ~det_fus).any() and (det_fus & ~det_cam).any()
+
+
+@pytest.mark.parametrize('make', [occlusion_scenario, wall_hug_scenario])
+@pytest.mark.parametrize('sensor', ['camera', 'lidar', 'fusion'])
+def test_worst_case_bound_is_valid_for_sensor_models(make, sensor):
+    scn = make(sensor=sensor)
+    world = sample_episodes(scn, episode_seeds(15, 300))
+    state = perceive(scn, world)
+    robots, agents, _ = simulate_branches(scn, world)
+    assert (clearance(robots, agents) >= worst_case_bounds(scn, state)).all()

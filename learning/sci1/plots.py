@@ -217,3 +217,57 @@ def detection_sweep(rows, alpha, path):
     fig.tight_layout(rect=(0, 0.02, 1, 1))
     fig.savefig(path, dpi=160, facecolor=SURFACE)
     plt.close(fig)
+
+
+def sensor_comparison(rows, labels, path):
+    """Figure 5: per sensor config, near-miss rate by method and what the log misses."""
+    scenarios = sorted({r['scenario'] for r in rows}, key=['occlusion', 'wall_hug'].index)
+    configs = list(dict.fromkeys(r['config'] for r in rows))
+    titles = {'occlusion': 'Wide corner', 'wall_hug': 'Wall-hugging agent, narrow corner'}
+    fig, axes = plt.subplots(2, len(scenarios), figsize=(6.4 * len(scenarios), 8.6),
+                             facecolor=SURFACE, sharey=True, squeeze=False)
+    ys = list(range(len(configs)))[::-1]
+    methods = ('naive_partial', 'verified_ipw', 'oracle_full')
+    height = 0.8 / len(methods)
+    top_max = 1.08 * max(100 * r[f'{m}_near_miss_rate'] for r in rows for m in methods)
+    for col, scenario in enumerate(scenarios):
+        by_config = {r['config']: r for r in rows if r['scenario'] == scenario}
+        ax = axes[0][col]
+        _style(ax)
+        ax.grid(axis='y', visible=False)
+        ax.grid(axis='x', color=GRID, linewidth=0.8)
+        for i, method in enumerate(methods):
+            color, label = METHOD_STYLE[method]
+            offs = [y + (len(methods) - 1 - i - (len(methods) - 1) / 2) * height for y in ys]
+            vals = [100 * by_config[c][f'{method}_near_miss_rate'] if c in by_config else 0
+                    for c in configs]
+            ax.barh(offs, vals, height * 0.85, color=color, label=label)
+        ax.set_xlim(0, top_max)
+        ax.set_xlabel('near-miss rate of chosen action (%)')
+        ax.set_title(titles.get(scenario, scenario), color=TEXT, fontsize=11, loc='left')
+        ax = axes[1][col]
+        _style(ax)
+        ax.grid(axis='y', visible=False)
+        ax.grid(axis='x', color=GRID, linewidth=0.8)
+        get = lambda key: [100 * by_config[c][key] if c in by_config else 0 for c in configs]
+        upper = [y + 0.19 for y in ys]
+        lower = [y - 0.19 for y in ys]
+        ax.barh(upper, get('logged_as_safe'), 0.34, color=TEXT_2,
+                label='near miss logged as safe (closest approach not recorded)')
+        never, late = get('never_detected'), get('lead_below_stop_time')
+        ax.barh(lower, never, 0.34, color='#8a8984', label='never detected within 3 s')
+        ax.barh(lower, late, 0.34, left=[n + 0.4 if n else 0 for n in never], color='#cfcec9',
+                label='first detected < stopping time (1 s) before closest')
+        ax.set_xlim(0, 100)
+        ax.set_xlabel('share of go-action near misses (%)')
+    for row_axes in axes:
+        row_axes[0].set_yticks(ys)
+        row_axes[0].set_yticklabels([labels.get(c, c) for c in configs], color=TEXT_2, fontsize=9)
+    axes[0][-1].legend(frameon=False, fontsize=8, loc='lower right', labelcolor=TEXT_2)
+    handles, names = axes[1][-1].get_legend_handles_labels()
+    fig.legend(handles, names, frameon=False, fontsize=8, loc='lower center', ncol=3,
+               labelcolor=TEXT_2)
+    axes[1][0].set_title('What the onboard log misses', color=TEXT, fontsize=11, loc='left')
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.savefig(path, dpi=160, facecolor=SURFACE)
+    plt.close(fig)

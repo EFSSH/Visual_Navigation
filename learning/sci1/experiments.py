@@ -12,6 +12,7 @@ log, and the figures unless ``--no-plots`` is given.
 
 import argparse
 import csv
+import dataclasses
 import json
 import os
 import time
@@ -25,17 +26,33 @@ from .planners import select_action, worst_case_bounds
 from .policies import (ALLOCATIONS, epsilon_propensities, nominal_action,
                        VerificationPolicy)
 from .predictors import ConstantVelocityPhantom, predicted_clearance
+from .sensors import SENSORS
 from .sim2d import (ACTION_SPEED, ACTIONS, clearance, episode_seeds, GO, perceive,
-                    PERCEPTION, sample_episodes, SCENARIOS, simulate_branches,
+                    PERCEPTION, sample_episodes, Scenario, SCENARIOS, simulate_branches,
                     trajectory_type, TRAJECTORY_TYPES)
 
 DET_FLAGS = ('det_p_far', 'det_near_range', 'det_min_range', 'det_p_near', 'det_corr')
+
+
+def parse_settings(items):
+    """``key=value`` pairs for any Scenario field, converted to the field's type."""
+    types = {f.name: f.type for f in dataclasses.fields(Scenario)}
+    out = {}
+    for item in items or []:
+        key, _, value = item.partition('=')
+        if key not in types:
+            raise ValueError(f'unknown scenario field {key!r}')
+        kind = types[key] if isinstance(types[key], type) else eval(types[key])
+        out[key] = value if kind is str else kind(value)
+    return out
 
 
 def make_scenario(args):
     """Scenario from the CLI: geometry preset, perception preset, overrides."""
     overrides = dict(PERCEPTION[args.perception])
     overrides.update({k: getattr(args, k) for k in DET_FLAGS if getattr(args, k) is not None})
+    overrides['sensor'] = args.sensor
+    overrides.update(parse_settings(args.set))
     if args.wall_setback is not None:
         if args.scenario == 'meeting':
             raise ValueError('--wall-setback does not apply to the meeting scenario')
@@ -231,6 +248,11 @@ def parse_args(argv=None):
                         help='detection preset; individual --det-* flags override it')
     for flag in DET_FLAGS:
         parser.add_argument('--' + flag.replace('_', '-'), type=float, default=None)
+    parser.add_argument('--sensor', default='abstract', choices=SENSORS,
+                        help='abstract: the --perception model; camera / lidar / fusion: '
+                             'sensor-specific detection (sensors.py)')
+    parser.add_argument('--set', action='append', metavar='FIELD=VALUE',
+                        help='override any Scenario field, e.g. --set cam_hfov_deg=87')
     parser.add_argument('--n-cal', type=int, default=4000)
     parser.add_argument('--n-test', type=int, default=4000)
     parser.add_argument('--reps', type=int, default=20)
