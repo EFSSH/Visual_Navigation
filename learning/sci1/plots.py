@@ -271,3 +271,40 @@ def sensor_comparison(rows, labels, path):
     fig.tight_layout(rect=(0, 0.03, 1, 1))
     fig.savefig(path, dpi=160, facecolor=SURFACE)
     plt.close(fig)
+
+
+def closed_loop_comparison(summary, labels, path):
+    """Figure 6: near-miss rate held vs replanning, and time lost when replanning."""
+    rules = ('naive_partial', 'verified_ipw', 'oracle_full', 'worst_case')
+    keys = list(dict.fromkeys((e['config'], e['noise']) for e in summary))
+    noise_label = {'none': 'no errors', 'camera_typical': 'noise + false det. + latency'}
+    names = [f'{labels.get(c, c)}\n{noise_label.get(n, n)}' for c, n in keys]
+    panels = (('hold_near_miss_rate', 100, 'near-miss rate, t0 decision held (%)'),
+              ('replan_near_miss_rate', 100, 'near-miss rate, replanning (%; note the finer scale)'),
+              ('replan_time_lost_s', 1, 'time lost over 5 s, replanning (s)'))
+    fig, axes = plt.subplots(1, 3, figsize=(15.0, 0.62 * len(keys) + 1.8), facecolor=SURFACE,
+                             sharey=True)
+    ys = list(range(len(keys)))[::-1]
+    height = 0.8 / len(rules)
+    by_key = {(e['config'], e['noise'], e['rule']): e for e in summary}
+    for ax, (metric, scale, xlabel) in zip(axes, panels):
+        _style(ax)
+        ax.grid(axis='y', visible=False)
+        ax.grid(axis='x', color=GRID, linewidth=0.8)
+        for i, rule in enumerate(rules):
+            color, label = METHOD_STYLE[rule]
+            offs = [y + ((len(rules) - 1) / 2 - i) * height for y in ys]
+            vals = [scale * by_key[(c, n, rule)][metric] if (c, n, rule) in by_key else 0
+                    for c, n in keys]
+            ax.barh(offs, vals, height * 0.85, color=color, label=label)
+        ax.set_xlabel(xlabel)
+    axes[0].set_yticks(ys)
+    axes[0].set_yticklabels(names, color=TEXT_2, fontsize=8)
+    axes[0].set_title('Mixed scenario: one decision held vs replanning at every frame',
+                      color=TEXT, fontsize=11, loc='left')
+    handles, names_ = axes[0].get_legend_handles_labels()
+    fig.legend(handles, names_, frameon=False, fontsize=8, loc='lower center', ncol=4,
+               labelcolor=TEXT_2)
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
+    fig.savefig(path, dpi=160, facecolor=SURFACE)
+    plt.close(fig)

@@ -5,7 +5,7 @@ import numpy as np
 from .policies import epsilon_propensities, nominal_action, sample_actions
 from .predictors import predicted_clearance
 from .records import DecisionLog
-from .sim2d import ACTIONS, perceive, sample_episodes, simulate_branches
+from .sim2d import ACTIONS, observe, perceive, sample_episodes, simulate_branches
 
 
 def collect(scn, seeds, predictor, verification, epsilon, rng, keep_oracle=True):
@@ -29,8 +29,10 @@ def collect(scn, seeds, predictor, verification, epsilon, rng, keep_oracle=True)
 
     robots, agents, viss = simulate_branches(scn, world)
     rows = np.arange(n)
-    robot, agent, vis = robots[rows, action], agents[rows, action], viss[rows, action]
-    observed = vis[:, 1:].all(-1) | verified
+    robot, agent = robots[rows, action], agents[rows, action]
+    onboard, vis = observe(scn, world, robot, agent, viss[rows, action])
+    visible_full = vis[:, 1:].all(-1)
+    observed = visible_full | verified
     columns = {
         'episode_id': rows.astype(np.int64),
         'decision_index': np.zeros(n, np.int64),
@@ -47,8 +49,8 @@ def collect(scn, seeds, predictor, verification, epsilon, rng, keep_oracle=True)
         'verified': verified,
         'visible_steps': vis,
         'robot_traj': robot,
-        'agent_traj_observed': np.where(vis[..., None], agent, np.nan),
-        'agent_traj_full': np.where(observed[:, None, None], agent, np.nan),
+        'agent_traj_observed': onboard,
+        'agent_traj_full': full_trajectory(verified, visible_full, agent, onboard),
     }
     if keep_oracle:
         columns.update(oracle_robot_traj=robots, oracle_agent_traj=agents,
@@ -81,14 +83,24 @@ def reverify(log, verification, uniforms):
     verified = uniforms < rho
     rows = np.arange(len(log))
     agent = log['oracle_agent_traj'][rows, log['action']]
-    observed = log.visible_full | verified
-    columns = dict(log.columns,
-                   verify_prob=rho, verified=verified,
-                   agent_traj_full=np.where(observed[:, None, None], agent, np.nan))
+    full = full_trajectory(verified, log.visible_full, agent, log['agent_traj_observed'])
+    columns = dict(log.columns, verify_prob=rho, verified=verified, agent_traj_full=full)
     meta = dict(log.meta, verification={'rho_visible': verification.rho_visible,
                                         'rho_hidden': verification.rho_hidden,
                                         'allocation': verification.allocation})
     return DecisionLog(meta, columns)
+
+
+def full_trajectory(verified, visible_full, truth, onboard):
+    """
+    The outcome as known after the fact: the independent verification's truth
+    if verified, else the onboard record if it covers every step, else NaN.
+    Onboard records carry the robot's measurement errors.
+    """
+    out = np.where(visible_full[:, None, None], onboard, np.nan)
+    out = np.where(verified[:, None, None], truth, out)
+    out[~(verified | visible_full)] = np.nan
+    return out
 
 
 def state_of(log):

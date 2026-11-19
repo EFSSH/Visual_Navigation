@@ -27,8 +27,8 @@ from .policies import (ALLOCATIONS, epsilon_propensities, nominal_action,
                        VerificationPolicy)
 from .predictors import ConstantVelocityPhantom, predicted_clearance
 from .sensors import SENSORS
-from .sim2d import (ACTION_SPEED, ACTIONS, clearance, episode_seeds, GO, perceive,
-                    PERCEPTION, sample_episodes, Scenario, SCENARIOS, simulate_branches,
+from .sim2d import (ACTION_SPEED, ACTIONS, clearance, episode_seeds, GO, NOISE, observe,
+                    perceive, PERCEPTION, sample_episodes, Scenario, SCENARIOS, simulate_branches,
                     trajectory_type, TRAJECTORY_TYPES)
 
 DET_FLAGS = ('det_p_far', 'det_near_range', 'det_min_range', 'det_p_near', 'det_corr')
@@ -50,6 +50,7 @@ def parse_settings(items):
 def make_scenario(args):
     """Scenario from the CLI: geometry preset, perception preset, overrides."""
     overrides = dict(PERCEPTION[args.perception])
+    overrides.update(NOISE[args.noise])
     overrides.update({k: getattr(args, k) for k in DET_FLAGS if getattr(args, k) is not None})
     overrides['sensor'] = args.sensor
     overrides.update(parse_settings(args.set))
@@ -65,6 +66,7 @@ def build_test_set(scn, predictor, n, seed, epsilon):
     world = sample_episodes(scn, episode_seeds(seed, n))
     state = perceive(scn, world)
     robots, agents, dets = simulate_branches(scn, world)
+    onboard, recorded = observe(scn, world, robots, agents, dets)
     d_hat = predicted_clearance(scn, state, predictor)
     candidate = np.ones(d_hat.shape, dtype=bool)
     mu = epsilon_propensities(nominal_action(d_hat, state['hidden0']), candidate, epsilon)
@@ -80,6 +82,7 @@ def build_test_set(scn, predictor, n, seed, epsilon):
         'robots': robots,
         'agents': agents,
         'dets': dets,
+        'onboard': onboard,
     }
 
 
@@ -135,7 +138,7 @@ def run(args):
     print(f'test set: {args.n_test} episodes, hidden share '
           f'{test["stratum"].mean():.2f}, built in {time.time() - started:.1f} s')
     diag = detection_diagnostics(scn, test['robots'], test['agents'], test['dets'],
-                                 test['state']['hidden0'], args.d_safe)
+                                 test['state']['hidden0'], args.d_safe, test['onboard'])
     with open(os.path.join(args.out, 'diagnostics.json'), 'w') as f:
         json.dump(diag, f, indent=2)
     print(format_diagnostics(diag))
@@ -248,6 +251,8 @@ def parse_args(argv=None):
                         help='detection preset; individual --det-* flags override it')
     for flag in DET_FLAGS:
         parser.add_argument('--' + flag.replace('_', '-'), type=float, default=None)
+    parser.add_argument('--noise', default='none', choices=sorted(NOISE),
+                        help='onboard measurement errors: noise, false detections, latency')
     parser.add_argument('--sensor', default='abstract', choices=SENSORS,
                         help='abstract: the --perception model; camera / lidar / fusion: '
                              'sensor-specific detection (sensors.py)')

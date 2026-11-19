@@ -35,7 +35,7 @@ FIELDS = {
     'visible_steps': ('b', lambda A, H: (H + 1,), 'detector reported the agent at each step'),
     'robot_traj': ('f', lambda A, H: (H + 1, 2), 'executed robot trajectory'),
     'agent_traj_observed': ('f', lambda A, H: (H + 1, 2), 'onboard view; NaN where not detected'),
-    'agent_traj_full': ('f', lambda A, H: (H + 1, 2), 'full truth if observed (R = 1), else NaN'),
+    'agent_traj_full': ('f', lambda A, H: (H + 1, 2), 'outcome if observed (R = 1): truth if verified, else onboard record; NaN otherwise'),
 }
 
 ORACLE_FIELDS = {
@@ -92,7 +92,7 @@ class DecisionLog:
         if (taken <= 0).any():
             raise ValueError('an executed action has zero propensity')
         observed = self.observed
-        if np.isnan(self.columns['agent_traj_full'][observed]).any():
+        if np.isnan(self.columns['agent_traj_full'][observed][:, 1:]).any():
             raise ValueError('observed decisions need a full agent trajectory')
         if not np.isnan(self.columns['agent_traj_full'][~observed]).all():
             raise ValueError('unobserved decisions must not carry a full trajectory')

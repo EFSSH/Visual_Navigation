@@ -98,6 +98,22 @@ class Scenario:
     lidar_points_hi: float = 4.0
     lidar_gap_lo: float = 0.05        # leg-to-wall gap (m): merged / separate cluster
     lidar_gap_hi: float = 0.15
+    # Second pedestrian lane: a share of agents hugs the side-corridor wall.
+    agent_hug_share: float = 0.0
+    agent_hug_x: float = -0.7
+    agent_hug_lateral: float = 0.1
+    # Per-episode initial robot speed drawn from these; empty: robot_speed0.
+    robot_speed0_choices: Tuple[float, ...] = ()
+    # Onboard measurement errors (all zero by default).
+    meas_noise_c0: float = 0.0        # radial position std = c0 + c2 * d^2 (m)
+    meas_noise_c2: float = 0.0
+    meas_noise_tan: float = 0.0       # tangential position std per metre of range
+    fp_rate: float = 0.0              # false detections per sensor frame
+    fp_range: float = 5.0             # false detections appear within this range
+    det_latency: float = 0.0          # detection-to-use delay (s)
+    # Closed loop (closed_loop.py): episode length and track coasting.
+    closed_loop_steps: int = 0
+    track_memory: float = 1.0         # keep a lost track for this long (s)
 
     @property
     def times(self):
@@ -109,8 +125,9 @@ class Scenario:
     @classmethod
     def from_dict(cls, data):
         data = dict(data)
-        for key in ('robot_start', 'agent_start'):
-            data[key] = tuple(data[key])
+        for key in ('robot_start', 'agent_start', 'robot_speed0_choices'):
+            if key in data:
+                data[key] = tuple(data[key])
         data['occluders'] = tuple(
             tuple(tuple(axis) for axis in box) for box in data['occluders'])
         return cls(**data)
@@ -148,6 +165,22 @@ def wall_hug_scenario(wall_setback=1.0, setback_y=0.7, **overrides):
     return Scenario(**overrides)
 
 
+def mixed_scenario(wall_setback=1.0, setback_y=0.7, **overrides):
+    """
+    Narrow corner with two kinds of pedestrians: half walk mid-corridor, half
+    hug the side-corridor wall. Some start near the crossing, so both
+    decision-time strata (agent detected / not detected) have samples, and
+    the robot starts at different speeds, as it would in closed loop.
+    """
+    overrides.setdefault('name', 'mixed')
+    overrides.setdefault('occluders', (corner_block(wall_setback, setback_y),))
+    overrides.setdefault('agent_hug_share', 0.5)
+    overrides.setdefault('agent_hug_x', -wall_setback + 0.3)
+    overrides.setdefault('agent_start', (0.3, 4.0))
+    overrides.setdefault('robot_speed0_choices', (0.0, 0.5, 1.0))
+    return Scenario(**overrides)
+
+
 def meeting_scenario(**overrides):
     """Control scenario: same crossing, no occluder."""
     overrides.setdefault('name', 'meeting')
@@ -156,7 +189,7 @@ def meeting_scenario(**overrides):
 
 
 SCENARIOS = {'occlusion': occlusion_scenario, 'wall_hug': wall_hug_scenario,
-             'meeting': meeting_scenario}
+             'mixed': mixed_scenario, 'meeting': meeting_scenario}
 
 # Detection presets. ``near_range_miss`` is a placeholder for a camera-based
 # person detector whose box is truncated at close range; calibrate it from
@@ -166,6 +199,24 @@ PERCEPTION = {
     'near_range_miss': dict(det_near_range=2.0, det_min_range=0.6, det_p_near=0.2,
                             det_corr=0.8),
 }
+
+# Measurement-error presets. ``camera_typical``: RGB-D depth error growing
+# with the square of range (about 4 cm at 2 m), bounding-box jitter of 1 % of
+# range, one false person detection per 50 frames and 0.15 s from exposure
+# to use. Placeholders until measured on the robot's own pipeline.
+NOISE = {
+    'none': {},
+    'camera_typical': dict(meas_noise_c0=0.01, meas_noise_c2=0.01, meas_noise_tan=0.01,
+                           fp_rate=0.02, det_latency=0.15),
+}
+
+
+def lanes(scn):
+    """Pedestrian lanes as (centre x, half spread)."""
+    out = [(scn.agent_x_center, scn.agent_lateral)]
+    if scn.agent_hug_share > 0:
+        out.append((scn.agent_hug_x, scn.agent_hug_lateral))
+    return out
 
 
 def episode_seeds(base_seed, n):
@@ -190,7 +241,20 @@ def sample_episodes(scn, seeds):
         'det2_u_episode': np.empty(n),
         'det2_u': np.empty((n, scn.horizon + 1)),
         'det2_share': np.empty((n, scn.horizon + 1)),
+        'robot_v0': np.empty(n),
+        'meas_noise': np.empty((n, scn.horizon + 1, 2)),
+        'fp_u': np.empty((n, scn.horizon + 1)),
+        'fp_pos_u': np.empty((n, scn.horizon + 1, 2)),
     }
+    cl = scn.closed_loop_steps
+    if cl:
+        out.update({
+            'cl_accel_noise': np.empty((n, cl)),
+            'cl_det_u': np.empty((n, cl + 1)), 'cl_det_share': np.empty((n, cl + 1)),
+            'cl_det2_u': np.empty((n, cl + 1)), 'cl_det2_share': np.empty((n, cl + 1)),
+            'cl_meas_noise': np.empty((n, cl + 1, 2)), 'cl_vel_noise': np.empty((n, cl + 1, 2)),
+            'cl_fp_u': np.empty((n, cl + 1)), 'cl_fp_pos_u': np.empty((n, cl + 1, 2)),
+        })
     for i, seed in enumerate(seeds):
         rng = np.random.default_rng(int(seed))
         out['robot_x0'][i] = -rng.uniform(*scn.robot_start)
@@ -210,17 +274,34 @@ def sample_episodes(scn, seeds):
         out['det2_u_episode'][i] = rng.uniform()
         out['det2_u'][i] = rng.uniform(size=scn.horizon + 1)
         out['det2_share'][i] = rng.uniform(size=scn.horizon + 1)
+        # Later additions, again drawn last.
+        lane_u, hug_offset, speed_u = rng.uniform(size=3)
+        if lane_u < scn.agent_hug_share:
+            out['agent_p0'][i, 0] = scn.agent_hug_x + (2 * hug_offset - 1) * scn.agent_hug_lateral
+        choices = scn.robot_speed0_choices
+        out['robot_v0'][i] = choices[int(speed_u * len(choices))] if choices else scn.robot_speed0
+        out['meas_noise'][i] = rng.standard_normal((scn.horizon + 1, 2))
+        out['fp_u'][i] = rng.uniform(size=scn.horizon + 1)
+        out['fp_pos_u'][i] = rng.uniform(size=(scn.horizon + 1, 2))
+        if cl:
+            out['cl_accel_noise'][i] = scn.agent_noise * rng.standard_normal(cl)
+            for key in ('cl_det_u', 'cl_det_share', 'cl_det2_u', 'cl_det2_share', 'cl_fp_u'):
+                out[key][i] = rng.uniform(size=cl + 1)
+            out['cl_meas_noise'][i] = rng.standard_normal((cl + 1, 2))
+            out['cl_vel_noise'][i] = rng.standard_normal((cl + 1, 2))
+            out['cl_fp_pos_u'][i] = rng.uniform(size=(cl + 1, 2))
     return out
 
 
-def robot_rollout(scn, robot_x0, action):
+def robot_rollout(scn, robot_x0, action, v0=None):
     """Robot positions (n, H+1, 2) when holding ``action``; known to the robot."""
     robot_x0 = np.asarray(robot_x0, dtype=float)
     action = np.broadcast_to(np.asarray(action), robot_x0.shape)
     target = ACTION_SPEED[action]
     out = np.zeros(robot_x0.shape + (scn.horizon + 1, 2))
     x = robot_x0.copy()
-    v = np.full(robot_x0.shape, scn.robot_speed0)
+    v = (np.full(robot_x0.shape, scn.robot_speed0) if v0 is None
+         else np.broadcast_to(np.asarray(v0, dtype=float), robot_x0.shape).copy())
     out[..., 0, 0] = x
     step = scn.robot_accel * scn.dt
     for k in range(scn.horizon):
@@ -249,7 +330,7 @@ def detection_prob(scn, dist):
     return scn.det_p_near + (scn.det_p_far - scn.det_p_near) * frac
 
 
-def detected(scn, world, step, robot_p, agent_p, los):
+def detected(scn, world, step, robot_p, agent_p, los, pre=''):
     """
     Detector output at ``step``, given line of sight ``los``.
 
@@ -259,14 +340,35 @@ def detected(scn, world, step, robot_p, agent_p, los):
     across branches, so branch replay stays exact.
     """
     def uniforms(prefix):
-        shared = world[prefix + '_share'][:, step] < scn.det_corr
-        return np.where(shared, world[prefix + '_u_episode'], world[prefix + '_u'][:, step])
+        shared = world[pre + prefix + '_share'][:, step] < scn.det_corr
+        return np.where(shared, world[prefix + '_u_episode'], world[pre + prefix + '_u'][:, step])
 
     if scn.sensor == 'abstract':
         dist = np.linalg.norm(np.asarray(robot_p) - np.asarray(agent_p), axis=-1)
         return los & (uniforms('det') < detection_prob(scn, dist))
     probs = channel_probs(scn, robot_p, agent_p)
     return np.logical_or.reduce([uniforms(prefix) < p for prefix, p in zip(('det', 'det2'), probs)])
+
+
+def agent_step(scn, world, robot_k, robot_next, agent_k, agent_next, speed, los_k, noise_k):
+    """
+    Advance the agent one step in place (``agent_next``); returns its new speed.
+
+    The agent slows down, by its reaction gain, when it sees the robot
+    approaching within ``reaction_range``.
+    """
+    robot_v = (robot_next[:, 0] - robot_k[:, 0]) / scn.dt
+    dist = np.linalg.norm(robot_k - agent_k, axis=-1)
+    approaching = (robot_v > 0.2) & (robot_k[:, 0] < agent_k[:, 0] + scn.corridor_half_width)
+    pressure = np.clip((scn.reaction_range - dist) / scn.reaction_range, 0.0, 1.0)
+    pressure = pressure * los_k * approaching
+    desired = world['agent_speed'] * (1.0 - world['beta'] * pressure)
+    step = scn.agent_accel * scn.dt
+    speed = speed + np.clip(desired - speed, -step, step) + noise_k * scn.dt
+    speed = np.clip(speed, 0.0, scn.agent_speed_max)
+    agent_next[:, 0] = agent_k[:, 0]
+    agent_next[:, 1] = agent_k[:, 1] - speed * scn.dt
+    return speed
 
 
 def simulate(scn, world, action, with_los=False):
@@ -278,7 +380,7 @@ def simulate(scn, world, action, with_los=False):
     line of sight (it sees the robot whether or not the robot detects it);
     with ``with_los`` the line-of-sight mask is returned as well.
     """
-    robot = robot_rollout(scn, world['robot_x0'], action)
+    robot = robot_rollout(scn, world['robot_x0'], action, world.get('robot_v0'))
     n, steps = robot.shape[0], scn.horizon
     agent = np.zeros((n, steps + 1, 2))
     agent[:, 0] = world['agent_p0']
@@ -287,19 +389,9 @@ def simulate(scn, world, action, with_los=False):
     los[:, 0] = visible(scn, robot[:, 0], agent[:, 0])
     det[:, 0] = detected(scn, world, 0, robot[:, 0], agent[:, 0], los[:, 0])
     speed = world['agent_speed'].copy()
-    preferred = world['agent_speed']
-    step = scn.agent_accel * scn.dt
     for k in range(steps):
-        robot_v = (robot[:, k + 1, 0] - robot[:, k, 0]) / scn.dt
-        dist = np.linalg.norm(robot[:, k] - agent[:, k], axis=-1)
-        approaching = (robot_v > 0.2) & (robot[:, k, 0] < agent[:, k, 0] + scn.corridor_half_width)
-        pressure = np.clip((scn.reaction_range - dist) / scn.reaction_range, 0.0, 1.0)
-        pressure = pressure * los[:, k] * approaching
-        desired = preferred * (1.0 - world['beta'] * pressure)
-        speed = speed + np.clip(desired - speed, -step, step) + world['accel_noise'][:, k] * scn.dt
-        speed = np.clip(speed, 0.0, scn.agent_speed_max)
-        agent[:, k + 1, 0] = agent[:, k, 0]
-        agent[:, k + 1, 1] = agent[:, k, 1] - speed * scn.dt
+        speed = agent_step(scn, world, robot[:, k], robot[:, k + 1], agent[:, k], agent[:, k + 1],
+                           speed, los[:, k], world['accel_noise'][:, k])
         los[:, k + 1] = visible(scn, robot[:, k + 1], agent[:, k + 1])
         det[:, k + 1] = detected(scn, world, k + 1, robot[:, k + 1], agent[:, k + 1], los[:, k + 1])
     det = track_frames(det, frame_period(scn))
@@ -310,6 +402,49 @@ def simulate_branches(scn, world, with_los=False):
     """All candidate actions from the same world: (n, A, H+1, ...) arrays."""
     branches = zip(*(simulate(scn, world, a, with_los) for a in range(len(ACTIONS))))
     return tuple(np.stack(b, 1) for b in branches)
+
+
+def measurement_noise(scn, robot_p, agent_p, z):
+    """Position error of one detection: radial c0 + c2 d^2, tangential tan * d."""
+    rel = np.asarray(agent_p, float) - np.asarray(robot_p, float)
+    dist = np.maximum(np.linalg.norm(rel, axis=-1, keepdims=True), 1e-9)
+    radial = rel / dist
+    tangent = np.stack([-radial[..., 1], radial[..., 0]], -1)
+    sigma_r = scn.meas_noise_c0 + scn.meas_noise_c2 * dist ** 2
+    sigma_t = scn.meas_noise_tan * dist
+    return sigma_r * z[..., :1] * radial + sigma_t * z[..., 1:] * tangent
+
+
+def false_detection_position(scn, robot_p, u):
+    """Where a false person detection appears: inside the camera's view or anywhere nearby."""
+    span = np.deg2rad(scn.cam_hfov_deg) if scn.sensor == 'camera' else 2 * np.pi
+    angle = (u[..., 0] - 0.5) * span
+    radius = 0.5 + u[..., 1] * (scn.fp_range - 0.5)
+    return np.asarray(robot_p, float) + radius[..., None] * np.stack([np.cos(angle), np.sin(angle)], -1)
+
+
+def observe(scn, world, robots, agents, dets, pre=''):
+    """
+    What the robot records: (positions, mask).
+
+    Detected steps carry the agent position plus measurement noise. At sensor
+    frames without a detection, a false detection appears with probability
+    ``fp_rate`` and is recorded as the agent (the tracker cannot tell). With
+    the default zero errors this is exactly the detected true positions.
+    Accepts (n, S, 2) or (n, A, S, 2) trajectories.
+    """
+    steps = robots.shape[-2]
+
+    def per_episode(key):
+        arr = world[pre + key][:, :steps]
+        return arr[:, None] if robots.ndim == 4 else arr
+
+    pos = agents + measurement_noise(scn, robots, agents, per_episode('meas_noise'))
+    frames = np.arange(steps) % frame_period(scn) == 0
+    fp = (per_episode('fp_u') < scn.fp_rate) & frames & ~dets
+    fp_pos = false_detection_position(scn, robots, per_episode('fp_pos_u'))
+    obs = np.where(dets[..., None], pos, np.where(fp[..., None], fp_pos, np.nan))
+    return obs, dets | fp
 
 
 def hidden_lane_start(scn):
@@ -347,26 +482,60 @@ def perceive(scn, world):
     with a sensor model, the nearest point the sensors do not cover for sure.
     """
     n = len(world['robot_x0'])
+    v0 = world['robot_v0'] if 'robot_v0' in world else np.full(n, scn.robot_speed0)
     robot0 = np.stack([world['robot_x0'], np.zeros(n)], -1)
-    los0 = visible(scn, robot0, world['agent_p0'])
-    hidden0 = ~detected(scn, world, 0, robot0, world['agent_p0'], los0)
+    # With latency, the frame in use was taken det_latency ago (the agent was
+    # further up its corridor, the robot further back); the estimate is then
+    # extrapolated to now with the estimated velocity.
+    lag = scn.det_latency
+    agent_seen = world['agent_p0'] + np.stack([np.zeros(n), world['agent_speed'] * lag], -1)
+    robot_seen = robot0 - np.stack([v0 * lag, np.zeros(n)], -1)
+    los0 = visible(scn, robot_seen, agent_seen)
+    detected0 = detected(scn, world, 0, robot_seen, agent_seen, los0)
     noise = scn.obs_noise * world['obs_noise']
-    obs = np.concatenate([
-        world['agent_p0'] + noise[:, :2],
-        np.stack([np.zeros(n), -world['agent_speed']], -1) + noise[:, 2:],
-    ], -1)
+    vel = np.stack([np.zeros(n), -world['agent_speed']], -1) + noise[:, 2:]
+    pos = agent_seen + noise[:, :2]
+    if 'meas_noise' in world:
+        pos = pos + measurement_noise(scn, robot_seen, agent_seen, world['meas_noise'][:, 0])
+    obs = np.concatenate([pos + vel * lag, vel], -1)
+    hidden0 = ~detected0
+    if scn.fp_rate > 0:
+        fp = hidden0 & (world['fp_u'][:, 0] < scn.fp_rate)
+        fp_pos = false_detection_position(scn, robot_seen, world['fp_pos_u'][:, 0])
+        obs[fp] = np.concatenate([fp_pos[fp], np.zeros((fp.sum(), 2))], -1)
+        hidden0 = hidden0 & ~fp
     obs[hidden0] = np.nan
-    grid_y = np.arange(hidden_lane_start(scn), scn.sensor_range + 10.0, 0.05)
-    points = np.stack([np.full_like(grid_y, scn.agent_x_center), grid_y], -1)
-    seen = sensed_region(scn, robot0, points)
-    first_hidden = np.argmax(~seen, axis=1)
-    phantom = np.stack([np.full(n, scn.agent_x_center), grid_y[first_hidden]], -1)
     return {
-        'robot_state0': np.stack([world['robot_x0'], np.full(n, scn.robot_speed0)], -1),
+        'robot_state0': np.stack([world['robot_x0'], v0], -1),
         'hidden0': hidden0,
         'agent_obs0': obs,
-        'phantom_p0': phantom,
+        'phantom_p0': phantom_points(scn, robot0),
     }
+
+
+def phantom_points(scn, robot_p, step=0.05):
+    """
+    Per robot position, the nearest lane point not covered for sure: (n, 2).
+
+    For each pedestrian lane, the first point along it (from the crossing
+    outwards) that is out of line of sight, or, with a sensor model, not
+    certainly detected; across lanes, the one nearest the robot.
+    """
+    robot_p = np.asarray(robot_p, float)
+    grid_y = np.arange(hidden_lane_start(scn), scn.sensor_range + 10.0, step)
+    best, best_dist = None, None
+    for x_lane, _ in lanes(scn):
+        points = np.stack([np.full_like(grid_y, x_lane), grid_y], -1)
+        seen = sensed_region(scn, robot_p, points)
+        phantom = points[np.argmax(~seen, axis=1)]
+        dist = np.linalg.norm(phantom - robot_p, axis=-1)
+        if best is None:
+            best, best_dist = phantom, dist
+        else:
+            closer = dist < best_dist
+            best = np.where(closer[:, None], phantom, best)
+            best_dist = np.minimum(dist, best_dist)
+    return best
 
 
 def clearance(robot, agent, vis=None):

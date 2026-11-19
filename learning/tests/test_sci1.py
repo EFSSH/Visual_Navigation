@@ -275,3 +275,73 @@ def test_worst_case_bound_is_valid_for_sensor_models(make, sensor):
     state = perceive(scn, world)
     robots, agents, _ = simulate_branches(scn, world)
     assert (clearance(robots, agents) >= worst_case_bounds(scn, state)).all()
+
+
+from sci1.closed_loop import always_go, closed_loop_metrics, run_closed_loop  # noqa: E402
+from sci1.collect import full_trajectory  # noqa: E402
+from sci1.sim2d import measurement_noise, mixed_scenario, NOISE, observe  # noqa: E402
+
+
+def test_observe_without_errors_is_the_detected_truth():
+    scn = occlusion_scenario(sensor='camera')
+    world = sample_episodes(scn, episode_seeds(16, 200))
+    robots, agents, det = simulate_branches(scn, world)
+    obs, mask = observe(scn, world, robots, agents, det)
+    assert np.array_equal(mask, det)
+    assert np.array_equal(obs[det], agents[det]) and np.isnan(obs[~det]).all()
+
+
+def test_measurement_errors_and_false_detections():
+    scn = mixed_scenario(sensor='camera', **NOISE['camera_typical'])
+    world = sample_episodes(scn, episode_seeds(17, 400))
+    robots, agents, det = simulate_branches(scn, world)
+    obs, mask = observe(scn, world, robots, agents, det)
+    false = mask & ~det
+    assert false.any() and (np.arange(det.shape[-1]) % 2 == 0)[None, None].repeat(
+        det.shape[0], 0).repeat(det.shape[1], 1)[false].all()   # only at sensor frames
+    err = np.linalg.norm(obs[det] - agents[det], axis=-1)
+    dist = np.linalg.norm(robots[det] - agents[det], axis=-1)
+    far, near = err[dist > 4].mean(), err[dist < 2].mean()
+    assert far > near > 0                                       # grows with range
+    z = np.zeros((1, 2)); z[0, 0] = 1.0
+    assert np.allclose(np.linalg.norm(measurement_noise(scn, [0, 0], [[3.0, 0.0]], z)),
+                       scn.meas_noise_c0 + scn.meas_noise_c2 * 9)
+
+
+def test_latency_uses_an_older_view():
+    fresh = occlusion_scenario()
+    late = occlusion_scenario(det_latency=0.5)
+    world = sample_episodes(fresh, episode_seeds(18, 2000))
+    assert perceive(late, world)['hidden0'].sum() > perceive(fresh, world)['hidden0'].sum()
+
+
+def test_mixed_scenario_has_both_lanes_and_strata():
+    scn = mixed_scenario()
+    world = sample_episodes(scn, episode_seeds(19, 1000))
+    hug = world['agent_p0'][:, 0] < -0.4
+    assert 0.4 < hug.mean() < 0.6
+    assert set(np.unique(world['robot_v0'])) == {0.0, 0.5, 1.0}
+    hidden = perceive(scn, world)['hidden0']
+    assert 0.1 < (~hidden).mean() < 0.4
+    robots, agents, _ = simulate_branches(scn, world)
+    assert (clearance(robots, agents) >= worst_case_bounds(scn, perceive(scn, world))).all()
+
+
+def test_full_trajectory_prefers_verified_truth():
+    truth = np.ones((3, 4, 2))
+    onboard = np.full((3, 4, 2), 2.0)
+    full = full_trajectory(np.array([True, False, False]), np.array([True, True, False]),
+                           truth, onboard)
+    assert (full[0] == 1).all() and (full[1] == 2).all() and np.isnan(full[2]).all()
+
+
+def test_closed_loop_replay_and_metrics():
+    scn = mixed_scenario(closed_loop_steps=30)
+    world = sample_episodes(scn, episode_seeds(20, 200))
+    a = run_closed_loop(scn, world, always_go)
+    b = run_closed_loop(scn, world, always_go)
+    assert np.array_equal(a['agent'], b['agent']) and np.array_equal(a['det'], b['det'])
+    stop = lambda state: np.full(len(state['hidden0']), YIELD)  # noqa: E731
+    m = closed_loop_metrics(scn, run_closed_loop(scn, world, stop), 0.8)
+    assert m['yield_share'] == 1.0 and m['time_lost_s'] > 0
+    assert closed_loop_metrics(scn, a, 0.8)['time_lost_s'] == pytest.approx(0.0, abs=1e-9)

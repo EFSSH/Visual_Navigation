@@ -43,8 +43,8 @@ class ConstantVelocityPhantom:
 
 def candidate_robot_trajs(scn, state):
     """Robot rollouts for every candidate action: (n, A, H+1, 2)."""
-    x0 = state['robot_state0'][:, 0]
-    return np.stack([robot_rollout(scn, x0, a) for a in range(len(ACTIONS))], 1)
+    x0, v0 = state['robot_state0'][:, 0], state['robot_state0'][:, 1]
+    return np.stack([robot_rollout(scn, x0, a, v0) for a in range(len(ACTIONS))], 1)
 
 
 def predicted_clearance(scn, state, predictor):

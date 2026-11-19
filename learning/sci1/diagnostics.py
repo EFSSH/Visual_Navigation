@@ -23,16 +23,22 @@ def _pct(x, q):
     return float(np.percentile(x, q)) if len(x) else None
 
 
-def detection_diagnostics(scn, robots, agents, dets, hidden0, d_safe):
+def detection_diagnostics(scn, robots, agents, dets, hidden0, d_safe, onboard=None):
     """
     ``robots``, ``agents``: (n, A, H+1, 2); ``dets``: (n, A, H+1) detector
-    output; ``hidden0``: (n,). Returns {action: {stratum: metrics}}.
+    output; ``hidden0``: (n,); ``onboard``: (n, A, H+1, 2) recorded positions
+    (with measurement errors), default the detected true positions.
+    Returns {action: {stratum: metrics}}.
     """
     d = np.linalg.norm(robots[..., 1:, :] - agents[..., 1:, :], axis=-1)   # (n, A, H)
     det = dets[..., 1:]
     k_min = d.argmin(-1)
     d_true = np.take_along_axis(d, k_min[..., None], -1)[..., 0]
-    d_rec = np.where(det, d, np.inf).min(-1)
+    if onboard is None:
+        d_rec = np.where(det, d, np.inf).min(-1)
+    else:
+        d_obs = np.linalg.norm(robots[..., 1:, :] - onboard[..., 1:, :], axis=-1)
+        d_rec = np.where(np.isnan(d_obs), np.inf, d_obs).min(-1)
     closest_seen = np.take_along_axis(det, k_min[..., None], -1)[..., 0]
     ever = det.any(-1)
     first = det.argmax(-1)
