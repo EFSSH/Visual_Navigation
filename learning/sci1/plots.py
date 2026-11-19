@@ -1,0 +1,170 @@
+"""
+Static figures for the SCI-1 2D experiments (PNG, light surface).
+
+Colors follow the reference categorical palette in a fixed method order, so
+a method keeps its color across figures and filters.
+"""
+
+import os
+
+import matplotlib
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt  # noqa: E402
+
+from .sim2d import TRAJECTORY_TYPES  # noqa: E402
+
+SURFACE = '#fcfcfb'
+TEXT = '#0b0b0b'
+TEXT_2 = '#52514e'
+GRID = '#e4e3df'
+
+# Fixed method -> slot order (reference palette, light mode).
+METHOD_STYLE = {
+    'worst_case': ('#52514e', 'B0 worst case'),
+    'naive_partial': ('#eb6834', 'naive (visible part)'),
+    'complete_case': ('#eda100', 'complete case'),
+    'verified_ipw': ('#2a78d6', 'verified IPW (exact)'),
+    'observed_ipw': ('#1baf7a', 'observed IPW (exp.)'),
+    'oracle_full': ('#6250d6', 'oracle (all truth)'),
+}
+TYPE_LABEL = {
+    'always_visible': 'always visible',
+    'lost_from_view': 'lost from view',
+    'emerging': 'emerging from corner',
+    'never_seen': 'never seen',
+}
+
+
+def _style(ax):
+    ax.set_facecolor(SURFACE)
+    for side in ('top', 'right'):
+        ax.spines[side].set_visible(False)
+    for side in ('left', 'bottom'):
+        ax.spines[side].set_color(GRID)
+    ax.tick_params(colors=TEXT_2, labelsize=9)
+    ax.yaxis.label.set_color(TEXT_2)
+    ax.xaxis.label.set_color(TEXT_2)
+    ax.grid(axis='y', color=GRID, linewidth=0.8)
+    ax.set_axisbelow(True)
+
+
+def _figure(width=7.5, height=4.2, cols=1):
+    fig, axes = plt.subplots(1, cols, figsize=(width, height), facecolor=SURFACE)
+    axes = [axes] if cols == 1 else list(axes)
+    for ax in axes:
+        _style(ax)
+    return fig, axes
+
+
+def _pick(summary, **match):
+    return [e for e in summary if all(e.get(k) == v for k, v in match.items())]
+
+
+def coverage_by_type(summary, alpha, budget, allocation, path):
+    """Figure 1: coverage per trajectory type, every method, at one alpha and budget."""
+    methods = [m for m in METHOD_STYLE if m != 'worst_case']
+    types = [t for t in TRAJECTORY_TYPES
+             if any(e.get(f'coverage_{t}') is not None for e in summary)]
+    fig, (ax,) = _figure(8.0, 4.2)
+    width = 0.8 / len(methods)
+    for i, method in enumerate(methods):
+        entry = (_pick(summary, method=method, alpha=alpha, budget=budget, allocation=allocation)
+                 or [None])[0]
+        if entry is None:
+            continue
+        xs = [j + (i - (len(methods) - 1) / 2) * width for j in range(len(types))]
+        ys = [entry.get(f'coverage_{t}', float('nan')) for t in types]
+        errs = [entry.get(f'coverage_{t}_std', 0.0) for t in types]
+        color, label = METHOD_STYLE[method]
+        ax.bar(xs, ys, width * 0.88, color=color, label=label, yerr=errs,
+               error_kw={'ecolor': TEXT_2, 'elinewidth': 0.8, 'capsize': 0})
+    ax.axhline(1 - alpha, color=TEXT, linewidth=1.0, linestyle=(0, (4, 3)))
+    ax.text(len(types) - 0.55, 1 - alpha + 0.005, f'target {1 - alpha:.2f}',
+            color=TEXT_2, fontsize=8, ha='right', va='bottom')
+    ax.set_xticks(range(len(types)))
+    ax.set_xticklabels([TYPE_LABEL[t] for t in types], color=TEXT_2)
+    ax.set_ylim(0.5, 1.02)
+    ax.set_ylabel('coverage of clearance bound')
+    ax.set_title(f'Coverage by trajectory type (alpha {alpha}, budget {budget}, {allocation})',
+                 color=TEXT, fontsize=11, loc='left')
+    ax.legend(frameon=False, fontsize=8, ncol=3, loc='lower left', labelcolor=TEXT_2)
+    fig.tight_layout()
+    fig.savefig(path, dpi=160, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def pareto(summary, budget, allocation, path):
+    """Figure 2: near-miss rate vs time lost, one curve per method over alpha."""
+    fig, (ax,) = _figure(7.5, 4.6)
+    for method, (color, label) in METHOD_STYLE.items():
+        if method == 'worst_case':
+            pts = _pick(summary, method=method)
+        else:
+            pts = sorted(_pick(summary, method=method, budget=budget, allocation=allocation),
+                         key=lambda e: e['alpha'])
+        if not pts:
+            continue
+        xs = [p['time_lost_s'] for p in pts]
+        ys = [100 * p['near_miss_rate'] for p in pts]
+        ax.plot(xs, ys, color=color, linewidth=2, marker='o', markersize=5,
+                markeredgecolor=SURFACE, markeredgewidth=1.5, label=label)
+        if method == 'worst_case':
+            ax.annotate(label, (xs[0], ys[0]), xytext=(-6, 6), textcoords='offset points',
+                        fontsize=8, color=TEXT_2, ha='right')
+    alphas = sorted({e['alpha'] for e in summary if e.get('alpha') is not None}, reverse=True)
+    ax.text(0.99, 0.70, 'points per curve, left to right:\nalpha = '
+            + ', '.join(str(a) for a in alphas), transform=ax.transAxes,
+            ha='right', va='top', fontsize=8, color=TEXT_2)
+    ax.set_xlabel('mean time lost vs always-go over the 3 s horizon (s)')
+    ax.set_ylabel('near-miss rate of chosen action (%)')
+    ax.set_title(f'Safety-efficiency trade-off (budget {budget}, {allocation}); '
+                 'lower-left is better', color=TEXT, fontsize=11, loc='left')
+    ax.grid(axis='x', color=GRID, linewidth=0.8)
+    ax.legend(frameon=False, fontsize=8, loc='upper right', labelcolor=TEXT_2)
+    fig.tight_layout()
+    fig.savefig(path, dpi=160, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def budget_curves(summary, alpha, path):
+    """Figure 3: hidden-stratum coverage, hidden-stratum and overall time lost vs budget."""
+    fig, axes = _figure(13.0, 4.0, cols=3)
+    dashes = {'uniform': (0, (4, 3)), 'hidden_focus': 'solid'}
+    for method in ('verified_ipw', 'observed_ipw', 'complete_case'):
+        color, label = METHOD_STYLE[method]
+        for allocation, dash in dashes.items():
+            pts = sorted(_pick(summary, method=method, alpha=alpha, allocation=allocation),
+                         key=lambda e: e['budget'])
+            if not pts:
+                continue
+            xs = [p['budget'] for p in pts]
+            name = f'{label}, {allocation}'
+            axes[0].plot(xs, [p['coverage_hidden0'] for p in pts], color=color,
+                         linestyle=dash, linewidth=2, marker='o', markersize=4, label=name)
+            axes[1].plot(xs, [p['time_lost_s_hidden0'] for p in pts], color=color,
+                         linestyle=dash, linewidth=2, marker='o', markersize=4, label=name)
+            axes[2].plot(xs, [p['time_lost_s'] for p in pts], color=color,
+                         linestyle=dash, linewidth=2, marker='o', markersize=4, label=name)
+    axes[0].axhline(1 - alpha, color=TEXT, linewidth=1.0, linestyle=(0, (4, 3)))
+    axes[0].set_ylabel('coverage, agent hidden at t0')
+    axes[1].set_ylabel('time lost, agent hidden at t0 (s)')
+    axes[2].set_ylabel('time lost, all decisions (s)')
+    for ax in axes:
+        ax.set_xlabel('verification budget per decision')
+    axes[0].set_title(f'Verification budget (alpha {alpha})', color=TEXT, fontsize=11, loc='left')
+    axes[2].legend(frameon=False, fontsize=7, loc='upper right', labelcolor=TEXT_2)
+    fig.tight_layout()
+    fig.savefig(path, dpi=160, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def make_figures(summary, args):
+    alpha = 0.1 if 0.1 in args.alphas else args.alphas[0]
+    budget = args.budgets[len(args.budgets) // 2]
+    allocation = 'hidden_focus' if 'hidden_focus' in args.allocations else args.allocations[0]
+    coverage_by_type(summary, alpha, budget, allocation,
+                     os.path.join(args.out, 'fig1_coverage_by_type.png'))
+    pareto(summary, budget, allocation, os.path.join(args.out, 'fig2_pareto.png'))
+    if len(args.budgets) > 1:
+        budget_curves(summary, alpha, os.path.join(args.out, 'fig3_budget.png'))
