@@ -11,6 +11,7 @@ safe but actually a near miss" directly measurable.
 
 import numpy as np
 
+from .paths import path_project, path_tangent
 from .sim2d import ACTIONS, clearance, robot_rollout
 
 
@@ -35,7 +36,11 @@ class ConstantVelocityPhantom:
         obs = state['agent_obs0']
         n = len(hidden)
         pos = np.where(hidden[:, None], state['phantom_p0'], obs[:, :2])
-        phantom_v = np.tile([0.0, -self.phantom_speed], (n, 1))
+        if self.scn.agent_path:
+            heading = path_tangent(self.scn, path_project(self.scn, state['phantom_p0']))
+            phantom_v = heading * self.phantom_speed
+        else:
+            phantom_v = np.tile([0.0, -self.phantom_speed], (n, 1))
         vel = np.where(hidden[:, None], phantom_v, obs[:, 2:])
         t = self.scn.times
         return pos[:, None, :] + vel[:, None, :] * t[None, :, None]

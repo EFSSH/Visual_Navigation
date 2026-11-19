@@ -10,6 +10,7 @@ differences come from calibration alone.
 import numpy as np
 
 from .predictors import candidate_robot_trajs
+from .paths import path_length, path_point
 from .sim2d import hidden_lane_start, lanes, sensed_region, YIELD
 
 
@@ -35,10 +36,16 @@ def worst_case_bounds(scn, state, grid_step=0.25, chunk=500):
     """
     robots = candidate_robot_trajs(scn, state)[:, :, 1:]          # (n, A, H, 2)
     reach = scn.agent_speed_max * scn.times[1:]                     # (H,)
-    lateral = np.concatenate([c + np.array([-w, 0.0, w]) for c, w in lanes(scn)])
-    spread = max(w for _, w in lanes(scn))
-    ys = np.arange(hidden_lane_start(scn), scn.sensor_range + 3.0, grid_step)
-    grid = np.stack(np.meshgrid(lateral, ys, indexing='ij'), -1).reshape(-1, 2)
+    if scn.agent_path:
+        spread = scn.agent_lateral
+        lateral = np.array([-spread, 0.0, spread])
+        ys = np.arange(0.0, path_length(scn) + grid_step, grid_step)     # arc lengths
+        grid = np.concatenate([path_point(scn, ys, off) for off in lateral])
+    else:
+        lateral = np.concatenate([c + np.array([-w, 0.0, w]) for c, w in lanes(scn)])
+        spread = max(w for _, w in lanes(scn))
+        ys = np.arange(hidden_lane_start(scn), scn.sensor_range + 3.0, grid_step)
+        grid = np.stack(np.meshgrid(lateral, ys, indexing='ij'), -1).reshape(-1, 2)
     grid_margin = 0.5 * np.hypot(spread, grid_step)
     unreliable = scn.det_near_range if scn.det_near_range > scn.det_min_range else 0.0
     obs_margin = 4.0 * scn.obs_noise
@@ -56,7 +63,7 @@ def worst_case_bounds(scn, state, grid_step=0.25, chunk=500):
         lb_vis = np.nan_to_num(d_vis, nan=np.inf).min(-1)
         # Hidden agent: phantom anywhere in the hidden part of the corridor.
         unseen = ~sensed_region(scn, robot0[sl], grid)               # (m, P)
-        if scn.sensor != 'abstract':
+        if scn.sensor != 'abstract' or scn.agent_path:
             columns = unseen.reshape(len(unseen), len(lateral), len(ys))
             grown = columns.copy()
             grown[..., 1:] |= columns[..., :-1]

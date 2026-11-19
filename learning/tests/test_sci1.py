@@ -345,3 +345,52 @@ def test_closed_loop_replay_and_metrics():
     m = closed_loop_metrics(scn, run_closed_loop(scn, world, stop), 0.8)
     assert m['yield_share'] == 1.0 and m['time_lost_s'] > 0
     assert closed_loop_metrics(scn, a, 0.8)['time_lost_s'] == pytest.approx(0.0, abs=1e-9)
+
+
+from sci1.paths import path_length, path_point, path_project, path_tangent  # noqa: E402
+from sci1.sim2d import door_scenario, walkway_scenario  # noqa: E402
+
+
+def test_polyline_path_geometry():
+    scn = walkway_scenario(length=8.0)
+    assert path_length(scn) == pytest.approx(16.0)
+    pts = path_point(scn, np.array([0.0, 8.0, 12.0, 16.0, 18.0]))
+    assert np.allclose(pts, [[8, 8], [8, 0], [4, 0], [0, 0], [0, -2]])
+    assert np.allclose(path_tangent(scn, np.array([4.0, 12.0, 18.0])), [[0, -1], [-1, 0], [0, -1]])
+    assert np.allclose(path_project(scn, pts[:4]), [0, 8, 12, 16])
+    # Offset is along the local normal: walking -x, the normal points -y.
+    assert np.allclose(path_point(scn, 12.0, 0.1), [4.0, -0.1])
+
+
+@pytest.mark.parametrize('make', [walkway_scenario, door_scenario])
+def test_head_on_nodes(make):
+    scn = make()
+    world = sample_episodes(scn, episode_seeds(21, 600))
+    present = world['agent_s0'] > -100
+    assert 0.25 < present.mean() < 0.55
+    robots, agents, det = simulate_branches(scn, world)
+    d = clearance(robots, agents)
+    assert (d[~present] > 5).all()                     # nobody coming: no conflict
+    assert (d[:, YIELD] >= 0.8).mean() > 0.95          # waiting at the node is safe
+    assert (d[present, GO] < 0.8).mean() > 0.4         # entering meets the oncoming worker
+    state = perceive(scn, world)
+    assert (d >= worst_case_bounds(scn, state)).all()
+    # The agent walks toward the robot until the entrance, then steps aside.
+    moved = agents[present, GO, -1] - agents[present, GO, 0]
+    assert (moved[:, 0] <= 2 * scn.agent_lateral + 1e-9).all()   # corner offset jump only
+
+
+def test_head_on_phantom_moves_toward_the_robot():
+    scn = walkway_scenario(sensor='camera', cam_hfov_deg=87, cam_vfov_deg=58, cam_height=0.5)
+    world = sample_episodes(scn, episode_seeds(22, 50))
+    state = perceive(scn, world)
+    hidden = state['hidden0']
+    assert hidden.any()
+    ph = state['phantom_p0'][hidden]
+    on_walkway = np.abs(ph[:, 1]) < 1e-9
+    assert on_walkway.any()
+    # Camera depth limit: the phantom sits about 5 m ahead in the walkway.
+    gap = ph[on_walkway, 0] - state['robot_state0'][hidden][on_walkway, 0]
+    assert np.all((gap > 4.5) & (gap < 5.5))
+    pred = ConstantVelocityPhantom(scn).predict(state)
+    assert (pred[hidden][on_walkway, -1, 0] < ph[on_walkway, 0]).all()

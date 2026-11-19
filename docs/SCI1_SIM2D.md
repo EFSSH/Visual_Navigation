@@ -12,6 +12,7 @@ PYTHONPATH=learning ../.venv-sci1/bin/python -m sci1.experiments --out ../sci1_r
 
 默认 20 次重复、每次 4000 个校准回合、4000 个测试回合，单核约 10 秒。常用参数：
 - `--scenario`：`occlusion`（宽墙角，v1 默认）、`wall_hug`（对方贴墙走、主走廊窄，出拐角时只剩 1.3–2 m）、`mixed`（窄墙角，一半行人贴墙、一半走中间，部分行人起点靠近路口，机器人初速度取 0 / 0.5 / 1 m/s，两层都有样本）、`meeting`（无遮挡对照）；
+- 石油平台的不可撤回节点（SCI-1 A 方向）：`walkway`（N1 单人通道入口，长 8 m，远端拐进设备后面，相机 5 m 深度上限之外也看不到；决策时域 10 s）、`door`（N3 防爆门，对方推门出来时已离机器人很近；时域 5 s）、`mixed`（N4 盲角路口）。N1、N3 中对方迎面而来，走到节点入口后让到一侧；有人的概率 `agent_presence` = 0.4（占位值，应以平台人员流量标定）。楼梯口（N2）的高度方向遮挡尚未建模；
 - `--noise`：`none`（默认）或 `camera_typical`（测量噪声随距离平方增大、误检、检测延迟 0.15 s，均为占位值）；
 - `--perception`：`ideal`（视线内一定检测到，等同 v1）或 `near_range_miss`（近距离漏检）；`--det-p-near`、`--det-corr`、`--det-near-range`、`--det-min-range`、`--det-p-far` 可单独覆盖预设值；
 - `--wall-setback`（墙角退让，越小越常被遮挡）、`--alphas`、`--budgets`、`--allocations`、`--methods`、`--epsilon`。
@@ -89,6 +90,7 @@ PYTHONPATH=learning ../.venv-sci1/bin/python -m sci1.closed_loop_compare --out .
 | `conformal.py` | 按（动作，决策时是否遮挡）分层的分割共形；方法 `naive_partial`、`complete_case`、`verified_ipw`（权重只依赖状态，有限样本保证严格成立）、`observed_ipw`（实验性）、`oracle_full` |
 | `planners.py` | 选下界 ≥ d_safe 的最快动作，否则让行；B0 最坏情况可达集（未检测时，视线外与近距离不可靠区都算未知） |
 | `sensors.py` | 相机、2D 激光雷达、融合的检测模型；5 Hz 出帧与跟踪插值 |
+| `paths.py` | 折线行人路径（迎面节点）：按弧长取位置、切向，投影 |
 | `closed_loop.py` | 每帧重新规划的闭环仿真、闭环指标、决策规则（各校准方法、B0、一直前进） |
 | `diagnostics.py` | 最近点是否被记录、首次检测时的剩余反应时间 |
 | `collect.py` | 按 μ、ρ 采集决策记录；`reverify` 用公共随机数比较不同核验分配 |

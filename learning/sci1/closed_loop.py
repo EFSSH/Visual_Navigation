@@ -27,7 +27,8 @@ from .policies import epsilon_propensities, nominal_action
 from .predictors import predicted_clearance
 from .conformal import lower_bounds
 from .sensors import frame_period
-from .sim2d import (ACTION_SPEED, agent_step, detected, false_detection_position, GO,
+from .sim2d import (ACTION_SPEED, agent_step, agent_velocity, detected,
+                    false_detection_position, GO,
                     measurement_noise, perceive, phantom_points, visible)
 
 
@@ -72,6 +73,7 @@ def run_closed_loop(scn, world, decide, replan=True, phantom_step=0.1):
     track = state0['agent_obs0'].copy()          # (x, y, vx, vy) at track_time
     track_time = np.where(state0['hidden0'], -np.inf, 0.0)
     agent_speed = world['agent_speed'].copy()
+    s = world['agent_s0'].copy() if scn.agent_path else None
     action = None
 
     for k in range(steps + 1):
@@ -80,7 +82,7 @@ def run_closed_loop(scn, world, decide, replan=True, phantom_step=0.1):
             det[:, k] = detected(scn, world, k, robot[:, k], agent[:, k], los[:, k], pre='cl_')
             z = world['cl_meas_noise'][:, k]
             pos = agent[:, k] + scn.obs_noise * z + measurement_noise(scn, robot[:, k], agent[:, k], z)
-            vel = (np.stack([np.zeros(n), -agent_speed], -1)
+            vel = (agent_velocity(scn, world, agent_speed, s)
                    + scn.obs_noise * world['cl_vel_noise'][:, k])
             frame = np.concatenate([pos, vel], -1)
             fp = ~det[:, k] & (world['cl_fp_u'][:, k] < scn.fp_rate)
@@ -120,9 +122,12 @@ def run_closed_loop(scn, world, decide, replan=True, phantom_step=0.1):
         dv = scn.robot_accel * dt
         speeds[:, k + 1] = speeds[:, k] + np.clip(ACTION_SPEED[action] - speeds[:, k], -dv, dv)
         robot[:, k + 1, 0] = robot[:, k, 0] + speeds[:, k + 1] * dt
-        agent_speed = agent_step(scn, world, robot[:, k], robot[:, k + 1], agent[:, k],
-                                 agent[:, k + 1], agent_speed, los[:, k],
-                                 world['cl_accel_noise'][:, k])
+        args = (scn, world, robot[:, k], robot[:, k + 1], agent[:, k], agent[:, k + 1],
+                agent_speed, los[:, k], world['cl_accel_noise'][:, k])
+        if s is None:
+            agent_speed = agent_step(*args)
+        else:
+            agent_speed, s = agent_step(*args, s=s)
 
     return {'robot': robot, 'agent': agent, 'speed': speeds, 'det': det, 'los': los,
             'actions': actions, 'hidden_at_decisions': np.stack(hidden_log, 1)}
