@@ -10,7 +10,7 @@ differences come from calibration alone.
 import numpy as np
 
 from .predictors import candidate_robot_trajs
-from .sim2d import YIELD, visible
+from .sim2d import hidden_lane_start, visible, YIELD
 
 
 def select_action(bounds, d_safe):
@@ -25,16 +25,19 @@ def worst_case_bounds(scn, state, grid_step=0.25, chunk=500):
     B0: reachable-set clearance bound, valid for any agent with speed <= v_max.
 
     Visible agent: everything within v_max * t of its estimated position.
-    Hidden agent: everything within v_max * t of any hidden point of the
-    side corridor (a phantom agent may be anywhere behind the corner). The
-    bound ignores walls, so it is conservative.
+    Undetected agent: everything within v_max * t of any point of the agent's
+    lane that the robot cannot vouch for - out of line of sight, or, when the
+    detector degrades at close range, closer than ``det_near_range``. The
+    bound ignores walls, so it is conservative. It assumes detection beyond
+    ``det_near_range`` is reliable (``det_p_far`` = 1).
     """
     robots = candidate_robot_trajs(scn, state)[:, :, 1:]          # (n, A, H, 2)
     reach = scn.agent_speed_max * scn.times[1:]                     # (H,)
-    lateral = np.array([-scn.agent_lateral, 0.0, scn.agent_lateral])
-    ys = np.arange(scn.corridor_half_width, scn.sensor_range + 3.0, grid_step)
+    lateral = scn.agent_x_center + np.array([-scn.agent_lateral, 0.0, scn.agent_lateral])
+    ys = np.arange(hidden_lane_start(scn), scn.sensor_range + 3.0, grid_step)
     grid = np.stack(np.meshgrid(lateral, ys, indexing='ij'), -1).reshape(-1, 2)
     grid_margin = 0.5 * np.hypot(lateral[1] - lateral[0], grid_step)
+    unreliable = scn.det_near_range if scn.det_near_range > scn.det_min_range else 0.0
     obs_margin = 4.0 * scn.obs_noise
 
     n = robots.shape[0]
@@ -50,6 +53,9 @@ def worst_case_bounds(scn, state, grid_step=0.25, chunk=500):
         lb_vis = np.nan_to_num(d_vis, nan=np.inf).min(-1)
         # Hidden agent: phantom anywhere in the hidden part of the corridor.
         unseen = ~visible(scn, robot0[sl, None, :], grid[None])     # (m, P)
+        if unreliable > 0:
+            near = np.linalg.norm(robot0[sl, None, :] - grid[None], axis=-1)
+            unseen = unseen | (near < unreliable + grid_margin)
         d_hid = np.linalg.norm(r[:, :, :, None, :] - grid[None, None, None], axis=-1)
         d_hid = d_hid - reach[None, None, :, None] - grid_margin
         d_hid = np.where(unseen[:, None, None, :], d_hid, np.inf)

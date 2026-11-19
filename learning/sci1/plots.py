@@ -11,6 +11,7 @@ import matplotlib
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
 
 from .sim2d import TRAJECTORY_TYPES  # noqa: E402
 
@@ -168,3 +169,51 @@ def make_figures(summary, args):
     pareto(summary, budget, allocation, os.path.join(args.out, 'fig2_pareto.png'))
     if len(args.budgets) > 1:
         budget_curves(summary, alpha, os.path.join(args.out, 'fig3_budget.png'))
+
+
+def detection_sweep(rows, alpha, path):
+    """Figure 4: near-miss rate and coverage vs close-range detection probability."""
+    scenarios = sorted({r['scenario'] for r in rows}, key=['occlusion', 'wall_hug'].index)
+    fig, axes = plt.subplots(2, len(scenarios), figsize=(5.2 * len(scenarios), 7.0),
+                             facecolor=SURFACE, sharex=True, sharey='row', squeeze=False)
+    dashes = {0.0: (0, (4, 3)), 0.8: 'solid'}
+    titles = {'occlusion': 'Wide corner (v1 geometry)',
+              'wall_hug': 'Wall-hugging agent, narrow corner'}
+    for col, scenario in enumerate(scenarios):
+        for row_i, (metric, scale, ylabel) in enumerate((
+                ('near_miss_rate', 100, 'near-miss rate of chosen action (%)'),
+                ('coverage', 1, 'coverage of clearance bound'))):
+            ax = axes[row_i][col]
+            _style(ax)
+            for method in ('naive_partial', 'verified_ipw', 'oracle_full'):
+                color, label = METHOD_STYLE[method]
+                for corr, dash in dashes.items():
+                    pts = sorted((r for r in rows if r['scenario'] == scenario
+                                  and r['method'] == method and r['det_corr'] == corr),
+                                 key=lambda r: -r['det_p_near'])
+                    if not pts:
+                        continue
+                    ax.plot([p['det_p_near'] for p in pts], [scale * p[metric] for p in pts],
+                            color=color, linestyle=dash, linewidth=2, marker='o', markersize=5,
+                            markeredgecolor=SURFACE, markeredgewidth=1.5)
+            if metric == 'coverage':
+                ax.axhline(1 - alpha, color=TEXT, linewidth=1.0, linestyle=(0, (4, 3)))
+                ax.set_xlabel('detection probability at close range (<= 0.6 m)')
+            ax.set_ylabel(ylabel)
+            ax.invert_xaxis() if not ax.xaxis_inverted() else None
+            if row_i == 0:
+                ax.set_title(titles.get(scenario, scenario), color=TEXT, fontsize=11, loc='left')
+    handles = [Line2D([], [], color=METHOD_STYLE[m][0], linewidth=2, label=METHOD_STYLE[m][1])
+               for m in ('naive_partial', 'verified_ipw', 'oracle_full')]
+    handles += [Line2D([], [], color=TEXT_2, linewidth=2, linestyle=dashes[0.8],
+                       label='misses persist across frames (0.8)'),
+                Line2D([], [], color=TEXT_2, linewidth=2, linestyle=dashes[0.0],
+                       label='independent misses per frame')]
+    axes[0][0].legend(handles=handles, frameon=False, fontsize=8, loc='upper left',
+                      labelcolor=TEXT_2)
+    fig.text(0.01, 0.005, 'Left to right: the detector gets worse at close range; 1.0 is ideal '
+             'detection. Verified IPW and oracle do not use the onboard record, so they stay flat.',
+             color=TEXT_2, fontsize=8)
+    fig.tight_layout(rect=(0, 0.02, 1, 1))
+    fig.savefig(path, dpi=160, facecolor=SURFACE)
+    plt.close(fig)

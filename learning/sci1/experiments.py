@@ -20,20 +20,34 @@ import numpy as np
 
 from .collect import collect, reverify
 from .conformal import calibration_table, lower_bounds, METHODS
+from .diagnostics import detection_diagnostics, format_diagnostics
 from .planners import select_action, worst_case_bounds
 from .policies import (ALLOCATIONS, epsilon_propensities, nominal_action,
                        VerificationPolicy)
 from .predictors import ConstantVelocityPhantom, predicted_clearance
 from .sim2d import (ACTION_SPEED, ACTIONS, clearance, episode_seeds, GO, perceive,
-                    sample_episodes, SCENARIOS, simulate_branches, trajectory_type,
-                    TRAJECTORY_TYPES)
+                    PERCEPTION, sample_episodes, SCENARIOS, simulate_branches,
+                    trajectory_type, TRAJECTORY_TYPES)
+
+DET_FLAGS = ('det_p_far', 'det_near_range', 'det_min_range', 'det_p_near', 'det_corr')
+
+
+def make_scenario(args):
+    """Scenario from the CLI: geometry preset, perception preset, overrides."""
+    overrides = dict(PERCEPTION[args.perception])
+    overrides.update({k: getattr(args, k) for k in DET_FLAGS if getattr(args, k) is not None})
+    if args.wall_setback is not None:
+        if args.scenario == 'meeting':
+            raise ValueError('--wall-setback does not apply to the meeting scenario')
+        overrides['wall_setback'] = args.wall_setback
+    return SCENARIOS[args.scenario](**overrides)
 
 
 def build_test_set(scn, predictor, n, seed, epsilon):
     """Held-out episodes with every branch simulated (ground truth for all actions)."""
     world = sample_episodes(scn, episode_seeds(seed, n))
     state = perceive(scn, world)
-    robots, agents, viss = simulate_branches(scn, world)
+    robots, agents, dets = simulate_branches(scn, world)
     d_hat = predicted_clearance(scn, state, predictor)
     candidate = np.ones(d_hat.shape, dtype=bool)
     mu = epsilon_propensities(nominal_action(d_hat, state['hidden0']), candidate, epsilon)
@@ -43,9 +57,12 @@ def build_test_set(scn, predictor, n, seed, epsilon):
         'd_hat': d_hat,
         'd_true': clearance(robots, agents),
         'mu': mu,
-        'types': trajectory_type(viss),
+        'types': trajectory_type(dets),
         'progress': robots[:, :, -1, 0] - robots[:, :, 0, 0],
         'worst_case': worst_case_bounds(scn, state),
+        'robots': robots,
+        'agents': agents,
+        'dets': dets,
     }
 
 
@@ -70,6 +87,9 @@ def evaluate(bounds, test, d_safe):
     for stratum, label in ((0, 'visible0'), (1, 'hidden0')):
         mask = test['stratum'] == stratum
         out[f'coverage_{label}'] = float(covered[mask].mean()) if mask.any() else None
+        out[f'near_miss_rate_{label}'] = float((chosen_d[mask] < d_safe).mean()) if mask.any() else None
+        out[f'optimistic_rate_{label}'] = float(
+            (certified[mask] & (chosen_d[mask] < d_safe)).mean()) if mask.any() else None
         out[f'time_lost_s_{label}'] = float(
             (test['progress'][mask, GO] - test['progress'][rows[mask], choice[mask]]).mean()
             / ACTION_SPEED[GO]) if mask.any() else None
@@ -82,8 +102,7 @@ def evaluate(bounds, test, d_safe):
 
 
 def run(args):
-    scn = (SCENARIOS[args.scenario](wall_setback=args.wall_setback)
-           if args.scenario == 'occlusion' else SCENARIOS[args.scenario]())
+    scn = make_scenario(args)
     predictor = ConstantVelocityPhantom(scn)
     os.makedirs(args.out, exist_ok=True)
     config = dict(vars(args), scenario_params=scn.to_dict(), predictor=predictor.name)
@@ -98,6 +117,11 @@ def run(args):
     rows.append(dict(base, **evaluate(test['worst_case'], test, args.d_safe)))
     print(f'test set: {args.n_test} episodes, hidden share '
           f'{test["stratum"].mean():.2f}, built in {time.time() - started:.1f} s')
+    diag = detection_diagnostics(scn, test['robots'], test['agents'], test['dets'],
+                                 test['state']['hidden0'], args.d_safe)
+    with open(os.path.join(args.out, 'diagnostics.json'), 'w') as f:
+        json.dump(diag, f, indent=2)
+    print(format_diagnostics(diag))
 
     rng = np.random.default_rng(args.seed + 1)
     for rep in range(args.reps):
@@ -177,7 +201,7 @@ def print_headline(summary, args):
     print(f'\nalpha = {alpha}, budget = {budget} (target coverage {1 - alpha:.2f}); '
           f'B0 = worst case')
     header = (f'{"method":<15}{"alloc":<14}{"cov hidden0":>12}{"cov emerging":>13}'
-              f'{"near miss":>10}{"stop":>7}{"time lost":>10}')
+              f'{"cov lost":>9}{"near miss":>10}{"optim.":>8}{"stop":>7}{"time lost":>10}')
     print(header)
     for entry in summary:
         if entry['method'] != 'worst_case' and (entry['alpha'] != alpha or entry['budget'] != budget):
@@ -185,7 +209,9 @@ def print_headline(summary, args):
         print(f'{entry["method"]:<15}{str(entry["allocation"]):<14}'
               f'{entry.get("coverage_hidden0", float("nan")):>12.3f}'
               f'{entry.get("coverage_emerging", float("nan")):>13.3f}'
-              f'{entry["near_miss_rate"]:>10.3f}{entry["stop_rate"]:>7.2f}'
+              f'{entry.get("coverage_lost_from_view", float("nan")):>9.3f}'
+              f'{entry["near_miss_rate"]:>10.3f}{entry["optimistic_rate"]:>8.3f}'
+              f'{entry["stop_rate"]:>7.2f}'
               f'{entry["time_lost_s"]:>9.2f}s')
 
 
@@ -198,8 +224,13 @@ def parse_args(argv=None):
 
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[1])
     parser.add_argument('--scenario', default='occlusion', choices=sorted(SCENARIOS))
-    parser.add_argument('--wall-setback', type=float, default=1.75,
-                        help='corner wall setback (m); smaller = more often hidden')
+    parser.add_argument('--wall-setback', type=float, default=None,
+                        help='corner wall setback (m); smaller = more often hidden '
+                             '(default: the scenario\'s own, 1.75 for occlusion)')
+    parser.add_argument('--perception', default='ideal', choices=sorted(PERCEPTION),
+                        help='detection preset; individual --det-* flags override it')
+    for flag in DET_FLAGS:
+        parser.add_argument('--' + flag.replace('_', '-'), type=float, default=None)
     parser.add_argument('--n-cal', type=int, default=4000)
     parser.add_argument('--n-test', type=int, default=4000)
     parser.add_argument('--reps', type=int, default=20)

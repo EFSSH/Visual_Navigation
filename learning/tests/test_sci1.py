@@ -8,9 +8,12 @@ from sci1.planners import select_action, worst_case_bounds
 from sci1.policies import epsilon_propensities, sample_actions, VerificationPolicy
 from sci1.predictors import ConstantVelocityPhantom, predicted_clearance
 from sci1.records import DecisionLog
-from sci1.sim2d import (clearance, episode_seeds, GO, meeting_scenario, occlusion_scenario,
-                        perceive, sample_episodes, simulate, simulate_branches,
-                        trajectory_type, YIELD)
+from sci1.diagnostics import detection_diagnostics
+from sci1.sim2d import (clearance, detection_prob, episode_seeds, GO, meeting_scenario,
+                        occlusion_scenario, PERCEPTION, perceive, sample_episodes, simulate,
+                        simulate_branches, trajectory_type, wall_hug_scenario, YIELD)
+
+NEAR_MISS = PERCEPTION['near_range_miss']
 
 BOX = ((-30.0, -1.0), (1.0, 30.0))
 
@@ -70,8 +73,9 @@ def test_verification_budget():
     assert VerificationPolicy.from_budget(0.2, 0.6).rho_hidden == 0.2
 
 
-def test_branch_replay_is_deterministic():
-    scn = occlusion_scenario()
+@pytest.mark.parametrize('perception', ['ideal', 'near_range_miss'])
+def test_branch_replay_is_deterministic(perception):
+    scn = occlusion_scenario(**PERCEPTION[perception])
     seeds = episode_seeds(7, 50)
     a = simulate(scn, sample_episodes(scn, seeds), GO)
     b = simulate(scn, sample_episodes(scn, seeds[::-1]), GO)
@@ -158,3 +162,62 @@ def test_all_methods_produce_bounds(logged):
         bounds, _ = lower_bounds(method, cal, test, 0.2)
         assert bounds.shape == (50, 3)
         assert np.all(bounds <= test['d_hat'] + 1e2)
+
+
+def test_ideal_detection_is_line_of_sight():
+    scn = occlusion_scenario()
+    world = sample_episodes(scn, episode_seeds(6, 300))
+    _, _, det, los = simulate_branches(scn, world, with_los=True)
+    assert np.array_equal(det, los)
+    assert np.array_equal(perceive(scn, world)['hidden0'], ~los[:, GO, 0])
+
+
+def test_detection_prob_degrades_only_at_close_range():
+    scn = occlusion_scenario(**NEAR_MISS)
+    p = detection_prob(scn, np.array([0.0, 0.6, 1.3, 2.0, 5.0]))
+    assert p[0] == p[1] == pytest.approx(0.2) and p[3] == p[4] == 1.0
+    assert 0.2 < p[2] < 1.0
+    assert np.all(detection_prob(occlusion_scenario(), np.linspace(0, 10, 11)) == 1.0)
+
+
+def test_misses_happen_only_in_line_of_sight_at_close_range():
+    scn = occlusion_scenario(**NEAR_MISS)
+    world = sample_episodes(scn, episode_seeds(8, 500))
+    robots, agents, det, los = simulate_branches(scn, world, with_los=True)
+    assert not (det & ~los).any()
+    missed = los & ~det
+    assert missed.any()
+    dist = np.linalg.norm(robots - agents, axis=-1)
+    assert (dist[missed] < scn.det_near_range).all()
+    # Same agent motion as ideal detection: the agent reacts to line of sight.
+    _, agents_ideal, _ = simulate_branches(occlusion_scenario(), world)
+    assert np.array_equal(agents, agents_ideal)
+
+
+def test_wall_hug_agents_emerge_close():
+    scn = wall_hug_scenario()
+    world = sample_episodes(scn, episode_seeds(9, 500))
+    robots, agents, det = simulate_branches(scn, world)
+    hidden0 = perceive(scn, world)['hidden0']
+    diag = detection_diagnostics(scn, robots, agents, det, hidden0, 0.8)
+    assert diag['go']['hidden0']['near_misses'] > 0
+    assert diag['go']['hidden0']['first_detect_dist_p50'] < 2.0
+    assert diag['go']['all']['closest_undetected'] == 0.0
+
+
+def test_close_range_misses_hide_the_closest_approach():
+    scn = wall_hug_scenario(**NEAR_MISS)
+    world = sample_episodes(scn, episode_seeds(10, 500))
+    robots, agents, det = simulate_branches(scn, world)
+    diag = detection_diagnostics(scn, robots, agents, det, perceive(scn, world)['hidden0'], 0.8)
+    assert diag['go']['all']['closest_undetected'] > 0.3
+    assert diag['go']['all']['recorded_as_safe'] > 0.1
+
+
+@pytest.mark.parametrize('scn', [wall_hug_scenario(), wall_hug_scenario(**NEAR_MISS),
+                                 occlusion_scenario(**NEAR_MISS)])
+def test_worst_case_bound_is_valid_with_close_range_misses(scn):
+    world = sample_episodes(scn, episode_seeds(13, 300))
+    state = perceive(scn, world)
+    robots, agents, _ = simulate_branches(scn, world)
+    assert (clearance(robots, agents) >= worst_case_bounds(scn, state)).all()
