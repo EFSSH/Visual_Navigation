@@ -43,6 +43,14 @@ PYTHONPATH=learning ../.venv-sci1/bin/python -m sci1.closed_loop_compare --out .
 
 输出 `rows.json`、`summary.json` 和 `fig6_closed_loop.png`。单次实验用 `--sensor camera|lidar|fusion`，任意场景参数用 `--set 字段=值` 覆盖，例如 `--set cam_hfov_deg=87 --set cam_height=0.5`。
 
+### v5 放行风险原型
+
+```bash
+PYTHONPATH=learning ../.venv-sci1/bin/python -m sci1.release_control_prototype
+```
+
+该命令复现 v5 实验记录的「结果二」。原型在决策时未检测到人的回合中，只考虑前进或停车让行。用已记录的前进预测值构造 10 个候选阈值，再用单侧 Clopper–Pearson 上界和 Bonferroni 校正筛选。前进采集概率和核验概率在该分层内为常数。输出对照机载日志、随机核验和仿真全真值三类校准数据。表中的放行比例和险情率在独立的测试回合上统计。
+
 ## 感知模型
 
 视线（几何）与检测（机器人的检测器）分开：对方按视线对机器人做出反应；机器人记录的一切（决策时是否遮挡、观测轨迹、可见步）都用检测结果。
