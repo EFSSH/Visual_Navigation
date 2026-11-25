@@ -23,6 +23,7 @@ import json
 
 from .corner_pass import CAMERA_CONFIGS, CornerScenario, simulate
 
+GZ_RAMPS = ((87.0, 0.06, 0.49), (120.0, 0.19, 0.63))
 VARIANTS = {
     'ideal': {},
     'latency 0.2s': {'recog_latency': 0.2},
@@ -37,6 +38,9 @@ VARIANTS = {
     'ideal + extrap': {'extrapolate': True},
     'realistic + extrap': {'recog_latency': 0.3, 'confirm_frames': 3, 'cam_area_lo': 0.4,
                            'cam_area_hi': 0.8, 'turn_blur': 0.5, 'extrapolate': True},
+    # Recognition ramps measured with YOLOv8s on Gazebo renders (go + slow replay):
+    'gz+extrap': {'cam_ramps': GZ_RAMPS, 'extrapolate': True},
+    'gz+confirm3+extrap': {'cam_ramps': GZ_RAMPS, 'confirm_frames': 3, 'extrapolate': True},
     'harsh': {'recog_latency': 0.5, 'confirm_frames': 3,
               'cam_area_lo': 0.5, 'cam_area_hi': 0.9, 'turn_blur': 0.7},
 }

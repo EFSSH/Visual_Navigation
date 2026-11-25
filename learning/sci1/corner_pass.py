@@ -94,6 +94,9 @@ class CornerScenario:
     cam_max_range: float = 5.0
     cam_area_lo: float = 0.25
     cam_area_hi: float = 0.55
+    # Optional per-camera ramps ((hfov, lo, hi), ...), e.g. measured in Gazebo;
+    # cameras whose hfov is not listed use cam_area_lo / cam_area_hi.
+    cam_ramps: Tuple[Tuple[float, float, float], ...] = ()
     sensor_range: float = 12.0
     # Perception imperfections (defaults reproduce the ideal detector):
     recog_latency: float = 0.0           # s from image to usable detection
@@ -183,7 +186,8 @@ def camera_prob(scn, robot_p, heading, person_p, half_width, omega=None):
     dist_pts = np.linalg.norm(rel, axis=-1)
     bearing = np.arctan2(rel[..., 1], rel[..., 0])
     dist = np.linalg.norm(person_p - robot_p, axis=-1)
-    best = np.zeros(len(robot_p))
+    ramps = {float(h): (lo, hi) for h, lo, hi in scn.cam_ramps}
+    prob = np.zeros(len(robot_p))
     for cam_heading, hfov, vfov, height in scn.cameras:
         in_fov = np.abs(_wrap(bearing - heading[:, None] - np.deg2rad(cam_heading))) \
             <= np.deg2rad(hfov) / 2
@@ -192,8 +196,8 @@ def camera_prob(scn, robot_p, heading, person_p, half_width, omega=None):
         top = np.minimum(scn.person_height, height + reach)
         bottom = np.maximum(0.0, height - reach)
         f_v = np.clip(top - bottom, 0.0, None) / scn.person_height
-        best = np.maximum(best, f_h * f_v)
-    prob = np.clip((best - scn.cam_area_lo) / (scn.cam_area_hi - scn.cam_area_lo), 0.0, 1.0)
+        lo, hi = ramps.get(float(hfov), (scn.cam_area_lo, scn.cam_area_hi))
+        prob = np.maximum(prob, np.clip((f_h * f_v - lo) / (hi - lo), 0.0, 1.0))
     if omega is not None and scn.turn_blur:
         prob = prob * (1.0 - scn.turn_blur * np.minimum(1.0, np.abs(omega) / 2.0))
     return prob
@@ -208,7 +212,7 @@ def in_path_ahead(robot_p, heading, person_p, reach, lateral):
     return (along > 0) & (along <= reach) & (across <= lateral)
 
 
-def simulate(scn, action, n, seed):
+def simulate(scn, action, n, seed, trajectories=False):
     """Roll out ``n`` corner encounters; returns per-episode arrays."""
     rng = np.random.default_rng(seed)
     rpath, r_lead = robot_path(scn)
@@ -377,6 +381,9 @@ def simulate(scn, action, n, seed):
                               & (first_logged <= first_contact),
                               (first_contact - first_logged) * dt, np.nan),
         'attentive': attentive,
+        **({'robot': robot, 'person': person, 'heading': heading, 'radius': p_rad,
+            'speed': speed, 'logged': logged, 'gap': gap, 'braking': brake_log}
+           if trajectories else {}),
     }
 
 

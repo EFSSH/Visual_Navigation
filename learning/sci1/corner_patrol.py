@@ -30,8 +30,12 @@ MODES = ('go', 'medium', 'slow', 'crawl')
 APPROACH_M = 4.0                                     # decision point to corner exit
 SECONDS = {'go': APPROACH_M / 1.0, 'medium': APPROACH_M / 0.7,
            'slow': APPROACH_M / 0.5, 'crawl': APPROACH_M / 0.3}
+GZ_RAMPS = ((87.0, 0.06, 0.49), (120.0, 0.19, 0.63))
 VARIANTS = {
     'ideal+extrap': {'extrapolate': True},
+    # Recognition ramps measured with YOLOv8s on Gazebo renders (go + slow replay):
+    'gz+extrap': {'cam_ramps': GZ_RAMPS, 'extrapolate': True},
+    'gz+confirm3+extrap': {'cam_ramps': GZ_RAMPS, 'confirm_frames': 3, 'extrapolate': True},
     'realistic+extrap': {'recog_latency': 0.3, 'confirm_frames': 3, 'cam_area_lo': 0.4,
                          'cam_area_hi': 0.8, 'turn_blur': 0.5, 'extrapolate': True},
 }
