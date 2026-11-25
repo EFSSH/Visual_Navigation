@@ -394,3 +394,52 @@ def test_head_on_phantom_moves_toward_the_robot():
     assert np.all((gap > 4.5) & (gap < 5.5))
     pred = ConstantVelocityPhantom(scn).predict(state)
     assert (pred[hidden][on_walkway, -1, 0] < ph[on_walkway, 0]).all()
+
+
+def test_corner_pass_logged_events_are_subsets():
+    from sci1.corner_pass import CAMERA_CONFIGS, CornerScenario, simulate, summarise
+    scn = CornerScenario(cameras=CAMERA_CONFIGS['front_87_h0.5'], steps=120)
+    assert abs(scn.passing_gap() - 0.21) < 1e-9
+    out = simulate(scn, 'go', 300, seed=3)
+    # Missing frames can only remove events from the onboard log.
+    for event in ('contact', 'near', 'proxy'):
+        assert not (out[event + '_logged'] & ~out[event]).any()
+    assert np.all(out['gap_logged'] >= out['gap_true'] - 1e-12)
+    # A contact is always a near-contact.
+    assert not (out['contact'] & ~out['near']).any()
+    row = summarise(out)
+    assert 0.0 <= row['miss_contact'] <= 1.0
+
+
+def test_corner_pass_v7_events_and_perception():
+    from sci1.corner_pass import CAMERA_CONFIGS, CornerScenario, simulate
+    base = CornerScenario(cameras=CAMERA_CONFIGS['front_87_h0.5'], steps=120)
+    out = simulate(base, 'slow', 300, seed=5)
+    for event in ('contact_mv', 'near_moving', 'late'):
+        assert not (out[event + '_logged'] & ~out[event]).any()
+    # A moving contact is a moving close call; a never-recognised encounter is late.
+    assert not (out['contact_mv'] & ~out['near_moving']).any()
+    assert not (out['never_recognised'] & ~out['late']).any()
+    # Perception options left at their defaults must not change the rollout.
+    same = simulate(CornerScenario(cameras=base.cameras, steps=120, recog_latency=0.0,
+                                   confirm_frames=1, turn_blur=0.0), 'slow', 300, seed=5)
+    for key in ('near_moving', 'late', 'never_recognised'):
+        assert np.array_equal(out[key], same[key])
+    # Stricter recognition can only make people harder to see.
+    strict = simulate(CornerScenario(cameras=base.cameras, steps=120, confirm_frames=3,
+                                     cam_area_lo=0.4, cam_area_hi=0.8), 'slow', 300, seed=5)
+    assert strict['never_recognised'].mean() >= out['never_recognised'].mean()
+    lagged = simulate(CornerScenario(cameras=base.cameras, steps=120, recog_latency=0.2,
+                                     extrapolate=True), 'slow', 100, seed=5)
+    assert not (lagged['near_moving_logged'] & ~lagged['near_moving']).any()
+
+
+def test_corner_check_certification_power():
+    from sci1.corner_check import k_max, n80, power
+    from sci1.release_control_prototype import clopper_pearson_upper
+    k = k_max(100, 0.10)
+    assert clopper_pearson_upper(k, 100, 0.05) <= 0.10 < clopper_pearson_upper(k + 1, 100, 0.05)
+    assert power(0.30, 100, 0.10) < 0.01 < 0.9 < power(0.01, 100, 0.10)
+    assert n80(0.20, 0.10) is None
+    need = n80(0.03, 0.10)
+    assert power(0.03, need, 0.10) >= 0.8 > power(0.03, need - 1, 0.10)
