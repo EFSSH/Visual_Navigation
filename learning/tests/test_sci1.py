@@ -443,3 +443,55 @@ def test_corner_check_certification_power():
     assert n80(0.20, 0.10) is None
     need = n80(0.03, 0.10)
     assert power(0.03, need, 0.10) >= 0.8 > power(0.03, need - 1, 0.10)
+
+
+def test_certify_rate_upper_and_allocate():
+    from sci1.certify import allocate, naive_upper, rate_upper
+    from sci1.release_control_prototype import clopper_pearson_upper
+    rng = np.random.default_rng(0)
+    n = 400
+    action = rng.integers(0, 2, n)
+    loss = rng.random(n) < np.where(action == 0, 0.2, 0.02)
+    onboard = loss & (rng.random(n) < 0.3)
+    ones = np.ones(n)
+    # Constant mu and rho = 1: the bound is the plain Clopper-Pearson bound on the mode's samples.
+    b = rate_upper(action, ones * 0.5, ones, np.ones(n, bool), loss, 1, 0.05, rng)
+    sel = action == 1
+    assert b.kept == sel.sum()
+    assert b.upper == clopper_pearson_upper(int(loss[sel].sum()), int(sel.sum()), 0.05)
+    # The onboard log can only see fewer events, so its bound is never higher.
+    assert naive_upper(action, onboard, 1, 0.05).upper <= b.upper
+    # Coverage of the thinned bound with partial verification and unequal mu.
+    mu = np.where(action == 1, 0.25, 0.75)
+    misses = 0
+    for _ in range(300):
+        a = (rng.random(n) < 0.25).astype(int)
+        l = rng.random(n) < np.where(a == 0, 0.2, 0.05)
+        v = rng.random(n) < 0.5
+        misses += rate_upper(a, np.where(a == 1, 0.25, 0.75), ones * 0.5, v, l, 1, 0.1, rng).upper < 0.05
+    assert misses / 300 <= 0.1 + 0.05
+    # Allocation: busy corner gets the safe mode, quiet corners stay fast.
+    plan, risk = allocate([10.0, 0.1, 0.1], {'go': 0.5, 'slow': 0.05}, {'go': 1.0, 'slow': 2.0}, 1.0)
+    assert plan == ['slow', 'go', 'go'] and risk <= 1.0
+    assert allocate([100.0], {'go': 0.5, 'slow': 0.05}, {'go': 1.0, 'slow': 2.0}, 1.0)[0] is None
+
+
+def test_certify_baselines():
+    from sci1.certify import decomposed_upper, point_estimate, ppi_upper
+    from sci1.release_control_prototype import clopper_pearson_upper
+    rng = np.random.default_rng(1)
+    loss = rng.random(500) < 0.1
+    onboard = loss & (rng.random(500) < 0.5)        # onboard log only misses events
+    assert point_estimate(loss) == loss.mean()
+    # Decomposition = onboard bound + missed-event bound at delta/2 each.
+    up = decomposed_upper(onboard, loss, onboard, 0.05)
+    missed = int((loss & ~onboard).sum())
+    assert abs(up - (clopper_pearson_upper(int(onboard.sum()), 500, 0.025)
+                     + clopper_pearson_upper(missed, 500, 0.025))) < 1e-12
+    # PPI with a perfect predictor collapses to the onboard mean plus a CLT margin.
+    p = ppi_upper(loss, loss, loss, 0.05)
+    assert loss.mean() <= p <= loss.mean() + 0.05
+    # All-zero labels: PPI has zero variance and claims rate 0, the exact bound does not.
+    zeros = np.zeros(50, bool)
+    assert ppi_upper(zeros, zeros, zeros, 0.05) == 0.0
+    assert decomposed_upper(zeros, zeros, zeros, 0.05) > 0.05
