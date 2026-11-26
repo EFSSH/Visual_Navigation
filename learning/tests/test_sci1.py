@@ -495,3 +495,70 @@ def test_certify_baselines():
     zeros = np.zeros(50, bool)
     assert ppi_upper(zeros, zeros, zeros, 0.05) == 0.0
     assert decomposed_upper(zeros, zeros, zeros, 0.05) > 0.05
+
+
+def test_certify_v7c_baselines():
+    from sci1.certify import (active_clt_upper, active_probs, betting_upper, ipw_pseudo,
+                              ppi_betting_upper, ppi_pp_upper, ppi_upper, rogan_gladen_upper)
+    from sci1.release_control_prototype import clopper_pearson_upper
+    rng = np.random.default_rng(2)
+    n = 600
+    loss = rng.random(n) < 0.1
+    onboard = loss & (rng.random(n) < 0.5)
+    # Betting bound: valid-looking and close to Clopper-Pearson for Bernoulli data.
+    b = betting_upper(loss, 1.0, 0.05, rng)
+    cp = clopper_pearson_upper(int(loss.sum()), n, 0.05)
+    assert loss.mean() < b < cp + 0.03
+    assert betting_upper(np.zeros(0), 1.0, 0.05, rng) == 1.0
+    # Betting coverage on rare events (finite sample, no normal approximation).
+    miss = sum(betting_upper(rng.random(150) < 0.02, 1.0, 0.1, rng) < 0.02 for _ in range(100))
+    assert miss <= 10
+    # PPI++ with a useless predictor falls back to the verified mean (lambda = 0).
+    noise = rng.random(n) < 0.3
+    assert ppi_pp_upper(noise, loss, noise[:n], 0.05) <= ppi_upper(noise, loss, noise[:n], 0.05) + 0.02
+    # IPW pseudo-outcome is unbiased and equals L under full verification.
+    assert np.array_equal(ipw_pseudo(onboard, np.ones(n, bool), loss, 1.0), loss.astype(float))
+    pi = active_probs(onboard, rng.random(n) < 0.3, 0.3)
+    assert abs(pi.sum() - 0.3 * n) < 1e-6 and (pi[onboard] == 0).all() and pi.max() <= 1.0
+    zs = [ipw_pseudo(onboard, rng.random(n) < pi, loss, np.maximum(pi, 1e-12)).mean()
+          for _ in range(400)]
+    assert abs(np.mean(zs) - loss.mean()) < 0.01
+    assert 0 < active_clt_upper(zs, 0.05) < 1
+    assert ppi_betting_upper(onboard, rng.random(n) < 0.5, loss, 0.5, 0.05, rng) > loss.mean()
+    # Rogan-Gladen: q = P(f) / Se; no verified close call -> vacuous.
+    rg = rogan_gladen_upper(onboard, loss, onboard, 0.05)
+    assert rg >= onboard.mean() / 0.5 - 0.05
+    assert rogan_gladen_upper(onboard, np.zeros(10, bool), np.zeros(10, bool), 0.05) == 1.0
+
+
+def test_certify_route_joint_and_route_tests():
+    import math
+    from sci1.certify_route import (allocate_general, beta_prior, joint_upper,
+                                    route_chernoff_upper, single_route_threshold)
+    from sci1.release_control_prototype import clopper_pearson_upper
+    # Known single-group values: Beta(1,1) prior, 126 zeros -> 6.03%; near-point prior 5% -> 7.23%.
+    assert abs(joint_upper([1.0], [0], [126], [(0.0, [(1.0, 1.0)])], 0.05)[0] - 0.0603) < 5e-4
+    assert abs(joint_upper([1.0], [0], [126], [(0.0, [(5e5, 9.5e6)])], 0.05)[0] - 0.0723) < 5e-4
+    # Proposition 2: all groups zero, atom w0 per group -> U <= log(1/(delta w0^G)) max W/n.
+    W, n = np.array([10, 25, 115, 134.]), np.array([36, 72, 126, 126])
+    U, _ = joint_upper(W, np.zeros(4), n, [(0.2, [(1, 1)])] * 4, 0.05)
+    assert U <= math.log(1 / (0.05 * 0.2 ** 4)) * (W / n).max() + 1e-9
+    # Joint region beats per-group Bonferroni on the v8 worked example and covers the truth.
+    x = np.array([7, 5, 1, 0])
+    pr = beta_prior([.207, .062, .007, .0003])
+    Uj, q = joint_upper(W, x, n, pr, 0.05)
+    cp = sum(W[i] * clopper_pearson_upper(int(x[i]), int(n[i]), 0.0125) for i in range(4))
+    assert Uj < cp and np.all(q >= x / n - 1e-12)
+    # Weighted Chernoff route bound: zero events -> log(1/delta) max W/n; close to pooled CP.
+    assert abs(route_chernoff_upper(W, np.zeros(4), n, 0.05) - math.log(20) * (W / n).max()) < 1e-6
+    assert route_chernoff_upper(W, x, np.array([0, 72, 126, 126]), 0.05) == np.inf
+    rng = np.random.default_rng(0)
+    qt, nn = np.array([.2, .06, .01, .001]), np.array([50, 100, 400, 450])
+    miss = sum(route_chernoff_upper(W, rng.binomial(nn, qt), nn, 0.1) < W @ qt for _ in range(400))
+    assert miss <= 40
+    # Single-route threshold matches the v8 worked example (360 checks, total exposure 284).
+    assert single_route_threshold(360, 284.0, 10.0, 0.05) == 6
+    # General allocation respects the budget and prefers slowing high-exposure corners.
+    risk = np.array([[5.0, 2.0, 0.5], [1.0, 0.4, 0.1]])
+    plan, tot = allocate_general(risk, np.array([4.0, 6.0, 8.0]), 3.0)
+    assert tot <= 3.0 and plan[0] > 0

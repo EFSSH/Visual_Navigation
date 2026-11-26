@@ -43,13 +43,17 @@ CAMERAS = ('front_87_h0.5', 'front_120_h0.5', 'ring4_87_h0.5')
 
 
 def outcome_pools(camera, variant, n, seed):
-    """Per mode: (true close call, onboard close call) for encounters only."""
+    """Per mode: (true close call, onboard close call, risk flag) for encounters only.
+
+    The risk flag is robot-observable: late warning or no recognition in its own log.
+    """
     scn = CornerScenario(cameras=CAMERA_CONFIGS[camera], **VARIANTS[variant])
     pools = {}
     for j, mode in enumerate(MODES):
         out = simulate(scn, mode, n, seed + 1000 * j)
         enc = out['encounter']
-        pools[mode] = (out['near_moving'][enc], out['near_moving_logged'][enc])
+        flag = out['late_logged'] | out['never_recognised']
+        pools[mode] = (out['near_moving'][enc], out['near_moving_logged'][enc], flag[enc])
     return pools
 
 

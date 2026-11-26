@@ -8,6 +8,13 @@ Per pass mode, from the same calibration data:
           (verified encounters);
 - point:  plug-in rate from verified encounters, no margin;
 - ppi:    prediction-powered CLT bound, onboard label as predictor;
+- ppi++:  power-tuned PPI (CLT);
+- ppiBet: finite-sample PPI, betting bound on the IPW pseudo-outcome;
+- active: active statistical inference (risk-flag verification probabilities,
+          same expected budget), CLT bound;
+- actBet: the same active verification with the finite-sample betting bound
+          (candidate for our method, not a published baseline);
+- rg:     Rogan-Gladen correction with exact bounds (P(log) / sensitivity);
 - naive:  Clopper-Pearson on the onboard log alone.
 Plus oracle (true rates), fixed modes, and B0: the fastest mode with no close
 call in a worst-case encounter (inattentive worker at 1.8 m/s on the
@@ -25,12 +32,14 @@ import json
 
 import numpy as np
 
-from .certify import (allocate, decomposed_upper, naive_upper, point_estimate, ppi_upper,
-                      rate_upper)
+from .certify import (active_clt_upper, active_probs, allocate, betting_upper,
+                      decomposed_upper, ipw_pseudo, naive_upper, point_estimate,
+                      ppi_betting_upper, ppi_pp_upper, ppi_upper, rate_upper,
+                      rogan_gladen_upper)
 from .corner_pass import CAMERA_CONFIGS, CornerScenario, simulate
 from .corner_patrol import MODES, SECONDS, VARIANTS, evaluate, outcome_pools, platform
 
-METHODS = ('ours', 'oursB', 'point', 'ppi', 'naive')
+METHODS = ('ours', 'oursB', 'point', 'ppi', 'ppi++', 'ppiBet', 'active', 'actBet', 'rg', 'naive')
 STOP_SECONDS = SECONDS['crawl'] + 2.0
 WORST_CASE = dict(attentive_share=0.0, person_speed_median=1.8, person_speed_sigma=0.0,
                   react_range_inattentive=(0.6, 0.6), person_lateral=0.0)
@@ -52,17 +61,21 @@ def calibration(pools, n_cal, rho, mix, onboard_factor, rng):
     verified = rng.random(n_cal) < rho
     loss = np.zeros(n_cal, bool)
     onboard = np.zeros(n_cal, bool)
+    flag = np.zeros(n_cal, bool)
     extra = {}
     for a, m in enumerate(MODES):
         idx = np.flatnonzero(action == a)
         draw = rng.integers(0, len(pools[m][0]), len(idx))
-        loss[idx], onboard[idx] = pools[m][0][draw], pools[m][1][draw]
+        loss[idx], onboard[idx], flag[idx] = pools[m][0][draw], pools[m][1][draw], pools[m][2][draw]
         # Routine onboard-only logs of the same mode (no verification).
         extra[m] = pools[m][1][rng.integers(0, len(pools[m][1]), onboard_factor * len(idx))]
-    return action, probs[action], verified, loss, onboard, extra
+    # Active verification: drawn from the robot's own log before the label is seen.
+    pi = active_probs(onboard, flag, rho)
+    verified_act = rng.random(n_cal) < pi
+    return action, probs[action], verified, loss, onboard, extra, pi, verified_act
 
 
-def bounds(action, mu, rho, verified, loss, onboard, extra, d, rng):
+def bounds(action, mu, rho, verified, loss, onboard, extra, pi, verified_act, d, rng):
     out = {k: {} for k in METHODS}
     rho_v = np.full(len(action), rho)
     for a, m in enumerate(MODES):
@@ -73,6 +86,13 @@ def bounds(action, mu, rho, verified, loss, onboard, extra, d, rng):
         out['oursB'][m] = decomposed_upper(on_all, loss[v], onboard[v], d)
         out['point'][m] = point_estimate(loss[v])
         out['ppi'][m] = ppi_upper(on_all, loss[v], onboard[v], d)
+        out['ppi++'][m] = ppi_pp_upper(on_all, loss[v], onboard[v], d)
+        out['ppiBet'][m] = ppi_betting_upper(onboard[sel], verified[sel], loss[sel], rho, d, rng)
+        z = ipw_pseudo(onboard[sel], verified_act[sel], loss[sel], np.maximum(pi[sel], 1e-12))
+        out['active'][m] = active_clt_upper(z, d)
+        pmin = pi[sel][~onboard[sel]].min() if (~onboard[sel]).any() else 1.0
+        out['actBet'][m] = betting_upper(z, 1.0 / max(pmin, 1e-12), d, rng)
+        out['rg'][m] = rogan_gladen_upper(on_all, loss[v], onboard[v], d)
         out['naive'][m] = naive_upper(action, onboard, a, d).upper
     return out
 
@@ -84,9 +104,10 @@ def run_case(pools, E, n_cal, rho, mix, onboard_factor, budget, delta, reps, see
     rows = {k: [] for k in METHODS}
     qs = {k: {m: [] for m in MODES} for k in METHODS}
     for _ in range(reps):
-        action, mu, verified, loss, onboard, extra = calibration(
+        action, mu, verified, loss, onboard, extra, pi, verified_act = calibration(
             pools, n_cal, rho, mix, onboard_factor, rng)
-        per_mode = bounds(action, mu, rho, verified, loss, onboard, extra, d, rng)
+        per_mode = bounds(action, mu, rho, verified, loss, onboard, extra, pi, verified_act,
+                          d, rng)
         for name, q in per_mode.items():
             plan, _ = allocate(E, q, SECONDS, budget)
             if plan is None:
