@@ -562,3 +562,17 @@ def test_certify_route_joint_and_route_tests():
     risk = np.array([[5.0, 2.0, 0.5], [1.0, 0.4, 0.1]])
     plan, tot = allocate_general(risk, np.array([4.0, 6.0, 8.0]), 3.0)
     assert tot <= 3.0 and plan[0] > 0
+
+
+def test_sample_size_design_rule():
+    from sci1.certify_route import single_route_threshold
+    from sci1.sample_size import first_n, pass_prob, threshold
+    # Cached threshold agrees with the direct search.
+    for N in (120, 360, 777, 1500):
+        assert threshold(N, 284.0, 10.0, 0.05) == single_route_threshold(N, 284.0, 10.0, 0.05)
+    # Worked example from the plan: 360 checks, risk 5 -> 55.2 %, risk 8 -> 11.8 %.
+    assert abs(pass_prob(360, 5.0, 284.0, 10.0, 0.05) - 0.552) < 0.005
+    assert abs(pass_prob(360, 8.0, 284.0, 10.0, 0.05) - 0.118) < 0.005
+    # First N reaching 80 % for risk 5 is 549; a riskier route needs more checks.
+    assert first_n(5.0, 0.8, 284.0, 10.0, 0.05) == 549
+    assert first_n(6.0, 0.8, 284.0, 10.0, 0.05) > 549
